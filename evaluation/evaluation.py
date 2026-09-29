@@ -72,6 +72,28 @@ def default_pytest_parser(log: str) -> dict[str, str]:
             mapping[test] = 'fail'
     return mapping
 
+
+def _require_patch_application(
+    container: SetupRuntime,
+    patch: str,
+    *,
+    instance_id: str,
+    patch_kind: str,
+    verbose: bool = False,
+) -> None:
+    """Apply a required patch or stop before commands grade an invalid revision."""
+    if container.apply_patch(patch, verbose=verbose):
+        return
+    try:
+        container.cleanup()
+    except Exception:
+        # Keep the patch failure as the actionable error if cleanup also fails.
+        pass
+    raise RuntimeError(
+        f"{patch_kind} patch failed to apply for {instance_id}; refusing to run build, test, or result commands."
+    )
+
+
 def get_default_image_name(instance_id: str, platform: Literal["windows", "linux"]) -> str:
     if platform == "linux":
         med = "x86_64"
@@ -112,8 +134,19 @@ def evaluate_instance(
                     output_dir: str,
                     ) -> dict[str, Literal['pass', 'fail', 'skip']]:
     container: SetupRuntime = SetupRuntime.from_launch_image(image, instance_id, platform, command_timeout=TIMEOUT)
-    container.apply_patch(test_patch)
-    container.apply_patch(solution_patch, verbose=True)
+    _require_patch_application(
+        container,
+        test_patch,
+        instance_id=instance_id,
+        patch_kind="test",
+    )
+    _require_patch_application(
+        container,
+        solution_patch,
+        instance_id=instance_id,
+        patch_kind="solution",
+        verbose=True,
+    )
     # Remember to rebuild after modifications to source codes !!!
     if rebuild_cmd.strip():
         container.send_command(rebuild_cmd)
