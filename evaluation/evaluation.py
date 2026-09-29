@@ -72,17 +72,25 @@ def default_pytest_parser(log: str) -> dict[str, str]:
             mapping[test] = 'fail'
     return mapping
 
-def _demote_passes_after_failed_test_command(
+def _mark_missing_expected_tests_after_failed_test_command(
     status: dict[str, Literal['pass', 'fail', 'skip']],
     exit_code: int,
+    expected_tests: list[str] | None,
 ) -> dict[str, Literal['pass', 'fail', 'skip']]:
-    """Do not publish partial passes when the prescribed test command failed."""
-    if int(exit_code) == 0:
+    """Fail only expected tests that lack a parsed terminal status after failure.
+
+    A non-zero aggregate test command can still contain authoritative terminal
+    PASS/FAIL/SKIP events for individual tests. Preserve those parsed events,
+    while treating expected tests absent from the structured result as failures
+    so an interrupted or incomplete run cannot resolve an instance.
+    """
+    if int(exit_code) == 0 or expected_tests is None:
         return status
-    return {
-        test: 'fail' if value == 'pass' else value
-        for test, value in status.items()
-    }
+    completed = dict(status)
+    for test_name in expected_tests:
+        if test_name not in completed:
+            completed[test_name] = 'fail'
+    return completed
 
 
 def get_default_image_name(instance_id: str, platform: Literal["windows", "linux"]) -> str:
@@ -123,6 +131,7 @@ def evaluate_instance(
                     parser: str,
                     platform: Literal["windows", "linux"],
                     output_dir: str,
+                    expected_tests: list[str] | None = None,
                     ) -> dict[str, Literal['pass', 'fail', 'skip']]:
     container: SetupRuntime = SetupRuntime.from_launch_image(image, instance_id, platform, command_timeout=TIMEOUT)
     container.apply_patch(test_patch)
@@ -144,8 +153,10 @@ def evaluate_instance(
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = default_pytest_parser(post_patch_log)
     else:
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = run_parser(parser, post_patch_log)
-    post_patch_status = _demote_passes_after_failed_test_command(
-        post_patch_status, test_result.metadata.exit_code
+    post_patch_status = _mark_missing_expected_tests_after_failed_test_command(
+        post_patch_status,
+        test_result.metadata.exit_code,
+        expected_tests,
     )
     container.cleanup()
     with open(os.path.join(output_dir, "status.json"), "w", encoding="utf-8") as f:
@@ -185,7 +196,8 @@ def run_instance(
             instance["pred_patch"],
             instance.get("log_parser", instance.get("parser", "")),
             platform,
-            instance_output_dir
+            instance_output_dir,
+            list(instance.get("PASS_TO_PASS", [])) + list(instance.get("FAIL_TO_PASS", [])),
     )
     suc = [test for test in res.keys() if 'pass' in res[test].lower()]
     fail = [test for test in res.keys() if 'fail' in res[test].lower()]

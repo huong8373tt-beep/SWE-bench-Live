@@ -57,7 +57,7 @@ class EvaluationCommandStatusTests(unittest.TestCase):
         evaluation.SetupRuntime = self.original_runtime
         evaluation.run_parser = self.original_parser
 
-    def test_evaluation_demotes_partial_passes_after_failed_test_command(self):
+    def test_evaluation_keeps_terminal_statuses_and_fails_missing_expected_tests(self):
         with tempfile.TemporaryDirectory() as output_dir:
             result = evaluation.evaluate_instance(
                 instance_id="example__partial-command",
@@ -70,22 +70,43 @@ class EvaluationCommandStatusTests(unittest.TestCase):
                 parser="example",
                 platform="windows",
                 output_dir=output_dir,
+                expected_tests=["TestPartial", "TestSkipped", "TestNotReported"],
             )
 
         self.assertEqual(
             result,
             {
-                "TestPartial": "fail",
+                "TestPartial": "pass",
                 "TestSkipped": "skip",
+                "TestNotReported": "fail",
             },
         )
         self.assertEqual(len(self.containers), 1)
         self.assertTrue(self.containers[0].cleaned)
 
-    def test_evaluation_keeps_statuses_when_test_command_succeeds(self):
+    def test_nonzero_exit_preserves_parsed_pass_fail_and_skip_statuses(self):
+        status = {
+            "TestPassed": "pass",
+            "TestFailed": "fail",
+            "TestSkipped": "skip",
+        }
+        self.assertEqual(
+            evaluation._mark_missing_expected_tests_after_failed_test_command(
+                status,
+                1,
+                ["TestPassed", "TestFailed", "TestSkipped"],
+            ),
+            status,
+        )
+
+    def test_successful_command_does_not_invent_missing_failures(self):
         status = {"TestPassing": "pass", "TestSkipped": "skip"}
         self.assertEqual(
-            evaluation._demote_passes_after_failed_test_command(status, 0),
+            evaluation._mark_missing_expected_tests_after_failed_test_command(
+                status,
+                0,
+                ["TestPassing", "TestSkipped", "TestNotReported"],
+            ),
             status,
         )
 
