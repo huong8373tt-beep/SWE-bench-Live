@@ -72,6 +72,19 @@ def default_pytest_parser(log: str) -> dict[str, str]:
             mapping[test] = 'fail'
     return mapping
 
+def _demote_passes_after_failed_test_command(
+    status: dict[str, Literal['pass', 'fail', 'skip']],
+    exit_code: int,
+) -> dict[str, Literal['pass', 'fail', 'skip']]:
+    """Do not publish partial passes when the prescribed test command failed."""
+    if int(exit_code) == 0:
+        return status
+    return {
+        test: 'fail' if value == 'pass' else value
+        for test, value in status.items()
+    }
+
+
 def get_default_image_name(instance_id: str, platform: Literal["windows", "linux"]) -> str:
     if platform == "linux":
         med = "x86_64"
@@ -122,7 +135,7 @@ def evaluate_instance(
         container.send_command(f"cat > run_test.sh <<'CC_PROMPT'\n{test_cmd}\nCC_PROMPT\n")
         test_cmd = "bash run_test.sh > testlog.out 2>&1"
         print_cmd = "cat testlog.out"
-    container.send_command(test_cmd)
+    test_result = container.send_command(test_cmd)
     post_patch_log: str = container.send_command(print_cmd).output
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
         f.write(post_patch_log)
@@ -131,6 +144,9 @@ def evaluate_instance(
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = default_pytest_parser(post_patch_log)
     else:
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = run_parser(parser, post_patch_log)
+    post_patch_status = _demote_passes_after_failed_test_command(
+        post_patch_status, test_result.metadata.exit_code
+    )
     container.cleanup()
     with open(os.path.join(output_dir, "status.json"), "w", encoding="utf-8") as f:
         json.dump(post_patch_status, f, indent = True)
