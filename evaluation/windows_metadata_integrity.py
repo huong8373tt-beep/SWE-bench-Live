@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-# A canonical Go test name does not contain captured JSON syntax or a go-test
-# duration suffix. Those fragments originate from wrapped parser output.
+# A canonical Go test name does not contain captured JSON syntax, a go-test
+# duration suffix, or a parser-spliced package/test separator. Those fragments
+# originate from wrapped or permissively parsed Go JSON output.
 _GO_JSON_FRAGMENT = re.compile(r'(?:\r?\n|\\n)"\}\s*$')
 _GO_DURATION_FRAGMENT = re.compile(r"\s\(\d+(?:\.\d+)?s\)\s*$")
+_PACKAGE_TEST_SEPARATOR_FRAGMENT = re.compile(r"/:\s*Test")
 
 
 def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
@@ -16,7 +18,11 @@ def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
     invalid: list[str] = []
     for value in names:
         name = str(value)
-        if _GO_JSON_FRAGMENT.search(name) or _GO_DURATION_FRAGMENT.search(name):
+        if (
+            _GO_JSON_FRAGMENT.search(name)
+            or _GO_DURATION_FRAGMENT.search(name)
+            or _PACKAGE_TEST_SEPARATOR_FRAGMENT.search(name)
+        ):
             invalid.append(name)
     return invalid
 

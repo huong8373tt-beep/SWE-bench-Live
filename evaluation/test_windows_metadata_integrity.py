@@ -31,6 +31,15 @@ class WindowsMetadataIntegrityTests(unittest.TestCase):
         self.assertFalse(gradable)
         self.assertEqual(invalid, ['TestVarzHandler/int_with_type_counter (0.00s)\\n"}'])
 
+    def test_detects_observed_package_test_separator_artifact(self):
+        malformed = "github.com/docker/docker/libnetwork/: TestSortByNetworkType"
+        gradable, invalid = windows_metadata_is_gradable(
+            {"PASS_TO_PASS": ["TestStable"], "FAIL_TO_PASS": [malformed]},
+            "windows",
+        )
+        self.assertFalse(gradable)
+        self.assertEqual(invalid, [malformed])
+
     def test_does_not_block_clean_windows_or_linux_metadata(self):
         clean = {"PASS_TO_PASS": ["TestStable"], "FAIL_TO_PASS": ["TestRegression"]}
         self.assertEqual(windows_metadata_is_gradable(clean, "windows"), (True, []))
