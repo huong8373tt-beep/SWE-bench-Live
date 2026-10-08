@@ -54,7 +54,12 @@ def parse_windows_go_json_status(log: str) -> dict[str, TestStatus] | None:
         name = event.get("Test")
         if not isinstance(name, str) or not name or is_corrupted_windows_test_name(name):
             continue
-        status[name] = action  # type: ignore[assignment]
+        package = event.get("Package")
+        # Published Go expectations are package-qualified. Preserve the package
+        # emitted by go test -json so same-named tests do not collide and the
+        # validator emits identities the evaluator can match exactly.
+        identity = f"{package}::{name}" if isinstance(package, str) and package else name
+        status[identity] = action  # type: ignore[assignment]
     return status if saw_go_stream else None
 
 
@@ -67,9 +72,12 @@ def normalize_windows_validation_status(
     """Prefer structured Go JSON for Windows validation metadata.
 
     Validation is the source of ``PASS_TO_PASS`` and ``FAIL_TO_PASS`` fields.
-    When Windows Go JSON is available, a permissive regex parser must not add
-    fragment-derived names to those dataset fields. Non-Windows and non-Go logs
-    retain the existing parser result unchanged.
+    Go metadata is stored as ``package::Test[/subtest]`` identities, so the
+    structured reader preserves both event fields rather than collapsing tests
+    with equal names in different packages. When Windows Go JSON is available,
+    a permissive regex parser must not add fragment-derived names to those
+    dataset fields. Non-Windows and non-Go logs retain the existing parser
+    result unchanged.
     """
     if platform != "windows":
         return parsed_status

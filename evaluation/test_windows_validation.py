@@ -8,9 +8,9 @@ from evaluation.windows_validation import (
 def test_windows_go_json_replaces_fragment_prone_custom_parser_statuses():
     log = "\n".join(
         [
-            '{"Action":"pass","Test":"TestStable"}',
-            '{"Action":"fail","Test":"TestRegression"}',
-            '{"Action":"pass","Test":"TestWrapped"',
+            '{"Action":"pass","Package":"example/pkg","Test":"TestStable"}',
+            '{"Action":"fail","Package":"example/pkg","Test":"TestRegression"}',
+            '{"Action":"pass","Package":"example/pkg","Test":"TestWrapped"',
             '  (0.00s)\\n"}',
         ]
     )
@@ -21,15 +21,28 @@ def test_windows_go_json_replaces_fragment_prone_custom_parser_statuses():
     }
 
     assert parse_windows_go_json_status(log) == {
-        "TestStable": "pass",
-        "TestRegression": "fail",
+        "example/pkg::TestStable": "pass",
+        "example/pkg::TestRegression": "fail",
     }
     assert normalize_windows_validation_status(
         "custom parser",
         log,
         parser_status,
         "windows",
-    ) == {"TestStable": "pass", "TestRegression": "fail"}
+    ) == {"example/pkg::TestStable": "pass", "example/pkg::TestRegression": "fail"}
+
+
+def test_package_qualified_identities_do_not_collapse_same_named_go_tests():
+    log = "\n".join(
+        [
+            '{"Action":"pass","Package":"example/first","Test":"TestSame"}',
+            '{"Action":"fail","Package":"example/second","Test":"TestSame"}',
+        ]
+    )
+    assert parse_windows_go_json_status(log) == {
+        "example/first::TestSame": "pass",
+        "example/second::TestSame": "fail",
+    }
 
 
 def test_wrapped_go_stream_fails_closed_instead_of_emitting_fragment_name():
