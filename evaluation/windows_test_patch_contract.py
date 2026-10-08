@@ -43,7 +43,8 @@ def added_go_test_functions(test_patch: str) -> list[str]:
 
 
 def _matches_added_test_root(expected_name: object, roots: Iterable[str]) -> bool:
-    name = str(expected_name)
+    """Compare a published package-qualified identity to a Go test root."""
+    name = str(expected_name).rsplit("::", 1)[-1]
     return any(name == root or name.startswith(root + "/") for root in roots)
 
 

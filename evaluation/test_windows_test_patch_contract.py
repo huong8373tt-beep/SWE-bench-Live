@@ -54,7 +54,10 @@ index 1111111..2222222 100644
         )
 
     def test_accepts_matching_test_or_subtest_and_ignores_other_platforms(self):
-        instance = {"test_patch": self.PATCH, "FAIL_TO_PASS": ["TestRegression/edge"]}
+        instance = {
+            "test_patch": self.PATCH,
+            "FAIL_TO_PASS": ["example/pkg::TestRegression/edge"],
+        }
         self.assertEqual(windows_go_test_patch_contract_is_gradable(instance, "windows"), (True, []))
         self.assertEqual(
             windows_go_test_patch_contract_is_gradable(
