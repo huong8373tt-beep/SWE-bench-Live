@@ -13,6 +13,9 @@ sys.modules.setdefault("launch.scripts", types.ModuleType("launch.scripts"))
 parser = types.ModuleType("launch.scripts.parser")
 parser.run_parser = lambda *_args, **_kwargs: {}
 sys.modules.setdefault("launch.scripts.parser", parser)
+datasets = types.ModuleType("datasets")
+datasets.load_dataset = lambda *_args, **_kwargs: []
+sys.modules.setdefault("datasets", datasets)
 
 from evaluation.windows_metadata_integrity import windows_metadata_is_gradable
 
@@ -45,6 +48,22 @@ class WindowsMetadataIntegrityTests(unittest.TestCase):
         valid_harness_name = "test_rewrite::test_rebase_descendants_multiple_swap - should panic"
         gradable, invalid = windows_metadata_is_gradable(
             {"PASS_TO_PASS": [malformed, valid_harness_name], "FAIL_TO_PASS": ["TestRegression"]},
+            "windows",
+        )
+        self.assertFalse(gradable)
+        self.assertEqual(invalid, [malformed])
+
+    def test_detects_wrapped_csharp_qualified_prefix_without_rejecting_parameter_newlines(self):
+        malformed = (
+            "AzureMcp.Tests.Areas.Aks.UnitTest\n"
+            "nts.Cluster.ClusterListCommandTests.ExecuteAsync_ValidatesInputCorrectly"
+        )
+        valid_parameter_newline = "Namespace.Type.Method(value: \"first\nsecond\")"
+        gradable, invalid = windows_metadata_is_gradable(
+            {
+                "PASS_TO_PASS": [malformed, valid_parameter_newline],
+                "FAIL_TO_PASS": ["TestRegression"],
+            },
             "windows",
         )
         self.assertFalse(gradable)

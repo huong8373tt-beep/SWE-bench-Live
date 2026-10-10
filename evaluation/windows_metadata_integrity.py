@@ -17,6 +17,12 @@ _PACKAGE_TEST_SEPARATOR_FRAGMENT = re.compile(r"/:\s*Test")
 # not a Rust test identity (for example, a wrapped `...::commit .` value).
 _RUST_TERMINAL_FRAGMENT = re.compile(r"\s+\.\s*$")
 
+# A C# xUnit display name can contain arbitrary parameter text after its first
+# opening parenthesis, but its namespace/type/member prefix cannot contain a
+# physical line break. This catches wrapped expected metadata without rejecting
+# a legitimate newline embedded in a string-valued test parameter.
+_CSHARP_QUALIFIED_PREFIX_NEWLINE = re.compile(r"^[^(\r\n]*(?:\r?\n)")
+
 
 def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
     """Return expected-test values that cannot be exact parsed test identifiers."""
@@ -28,6 +34,7 @@ def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
             or _GO_DURATION_FRAGMENT.search(name)
             or _PACKAGE_TEST_SEPARATOR_FRAGMENT.search(name)
             or _RUST_TERMINAL_FRAGMENT.search(name)
+            or _CSHARP_QUALIFIED_PREFIX_NEWLINE.search(name)
         ):
             invalid.append(name)
     return invalid
