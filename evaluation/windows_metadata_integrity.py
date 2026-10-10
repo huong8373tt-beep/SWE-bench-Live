@@ -12,6 +12,11 @@ _GO_JSON_FRAGMENT = re.compile(r'(?:\r?\n|\\n)"\}\s*$')
 _GO_DURATION_FRAGMENT = re.compile(r"\s\(\d+(?:\.\d+)?s\)\s*$")
 _PACKAGE_TEST_SEPARATOR_FRAGMENT = re.compile(r"/:\s*Test")
 
+# Rust test identities may include the harness suffix " - should panic", but
+# cannot end in a detached period. That shape is a terminal-transcript fragment,
+# not a Rust test identity (for example, a wrapped `...::commit .` value).
+_RUST_TERMINAL_FRAGMENT = re.compile(r"\s+\.\s*$")
+
 
 def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
     """Return expected-test values that cannot be exact parsed test identifiers."""
@@ -22,6 +27,7 @@ def invalid_windows_expected_tests(names: Iterable[object]) -> list[str]:
             _GO_JSON_FRAGMENT.search(name)
             or _GO_DURATION_FRAGMENT.search(name)
             or _PACKAGE_TEST_SEPARATOR_FRAGMENT.search(name)
+            or _RUST_TERMINAL_FRAGMENT.search(name)
         ):
             invalid.append(name)
     return invalid

@@ -40,6 +40,16 @@ class WindowsMetadataIntegrityTests(unittest.TestCase):
         self.assertFalse(gradable)
         self.assertEqual(invalid, [malformed])
 
+    def test_detects_observed_rust_terminal_fragment_but_keeps_harness_suffix(self):
+        malformed = "test_advance_bookmarks::test_advance_bookmarks_multiple_bookmarks::commit ."
+        valid_harness_name = "test_rewrite::test_rebase_descendants_multiple_swap - should panic"
+        gradable, invalid = windows_metadata_is_gradable(
+            {"PASS_TO_PASS": [malformed, valid_harness_name], "FAIL_TO_PASS": ["TestRegression"]},
+            "windows",
+        )
+        self.assertFalse(gradable)
+        self.assertEqual(invalid, [malformed])
+
     def test_does_not_block_clean_windows_or_linux_metadata(self):
         clean = {"PASS_TO_PASS": ["TestStable"], "FAIL_TO_PASS": ["TestRegression"]}
         self.assertEqual(windows_metadata_is_gradable(clean, "windows"), (True, []))
