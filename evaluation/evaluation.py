@@ -99,9 +99,10 @@ def windows_github_actions_workflow_contract_unobservable(
     This is intentionally a narrow contract guard rather than a YAML scorer. It
     applies only when both the official patch and the submitted solution change
     only GitHub Actions workflow definitions, while the published Windows command
-    is ``pnpm test:unit`` and contains no explicit workflow-validation tool or
-    workflow path. Such a command cannot provide exact evidence about either
-    workflow change, so an unrelated unit-test result must not decide the row.
+    is ``pnpm test:unit`` and invokes no explicit workflow-validation tool.
+    Merely reading a workflow file is not semantic validation. Such a command
+    cannot provide exact evidence about either workflow change, so an unrelated
+    unit-test result must not decide the row.
     """
     if platform != "windows":
         return None
@@ -117,7 +118,7 @@ def windows_github_actions_workflow_contract_unobservable(
     test_command = " ; ".join(instance.get("test_cmds", []) or [])
     if _WORKFLOW_UNIT_COMMAND.search(test_command) is None:
         return None
-    if ".github/workflows" in test_command.lower() or _WORKFLOW_VALIDATION_COMMAND.search(test_command):
+    if _WORKFLOW_VALIDATION_COMMAND.search(test_command):
         return None
     return {
         "official_workflow_paths": official_paths,

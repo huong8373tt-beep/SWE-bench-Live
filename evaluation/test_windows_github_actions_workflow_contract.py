@@ -130,7 +130,6 @@ class WindowsGithubActionsWorkflowContractTests(unittest.TestCase):
         for extra in (
             " ; actionlint .github/workflows/*.yaml",
             " ; gh workflow view pr-check.yaml",
-            " ; Get-Content .github/workflows/pr-check.yaml",
         ):
             row = instance()
             row["test_cmds"] = [UNIT_COMMAND + extra]
@@ -141,6 +140,17 @@ class WindowsGithubActionsWorkflowContractTests(unittest.TestCase):
                     "windows",
                 )
             )
+
+    def test_reading_workflow_text_does_not_count_as_semantic_validation(self) -> None:
+        row = instance()
+        row["test_cmds"] = [UNIT_COMMAND + " ; Get-Content .github/workflows/pr-check.yaml"]
+        self.assertIsNotNone(
+            EVALUATOR.windows_github_actions_workflow_contract_unobservable(
+                row,
+                row["pred_patch"],
+                "windows",
+            )
+        )
 
     def test_run_instance_persists_unavailable_without_scoring_unit_results(self) -> None:
         row = instance()
