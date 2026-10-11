@@ -33,7 +33,6 @@ class _Container:
 
 
 def test_evaluator_keeps_real_test_status_when_test_command_succeeds(monkeypatch, tmp_path):
-    tmp_path.mkdir()
     container = _Container(0, "log")
     monkeypatch.setattr(
         evaluation.SetupRuntime,
@@ -51,7 +50,6 @@ def test_evaluator_keeps_real_test_status_when_test_command_succeeds(monkeypatch
 
 
 def test_evaluator_marks_terminal_test_status_failed_when_test_command_fails(monkeypatch, tmp_path):
-    tmp_path.mkdir()
     container = _Container(1, "log")
     monkeypatch.setattr(
         evaluation.SetupRuntime,
