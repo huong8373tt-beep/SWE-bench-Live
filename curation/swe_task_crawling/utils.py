@@ -392,7 +392,12 @@ _TEST_ARTIFACT_PATH_MARKERS = (
     "tests",
     "e2e",
     "testing",
+)
+_BENCHMARK_DIRECTORY_MARKERS = (
     "bench",
+    "benches",
+    "benchmark",
+    "benchmarks",
 )
 
 
@@ -403,8 +408,12 @@ def is_test_artifact_path(path: str) -> bool:
     commands use ``--all-targets``.  Keep their support changes with the test
     patch rather than making a candidate patch reintroduce removed test helpers.
     """
-    normalized = str(path or "").lower()
-    return any(marker in normalized for marker in _TEST_ARTIFACT_PATH_MARKERS)
+    normalized = str(path or "").lower().replace("\\", "/")
+    path_parts = normalized.split("/")
+    return (
+        any(marker in normalized for marker in _TEST_ARTIFACT_PATH_MARKERS)
+        or any(marker in path_parts for marker in _BENCHMARK_DIRECTORY_MARKERS)
+    )
 
 
 def extract_patches(pull: dict, repo: Repo) -> tuple[str, str]:

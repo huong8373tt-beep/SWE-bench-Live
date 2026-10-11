@@ -35,6 +35,8 @@ class ExtractPatchesTests(unittest.TestCase):
         self.assertTrue(is_test_artifact_path("rustls/tests/api.rs"))
         self.assertTrue(is_test_artifact_path("rustls/benches/benchmarks.rs"))
         self.assertTrue(is_test_artifact_path("project/benchmark/main.go"))
+        self.assertTrue(is_test_artifact_path("project\\benches\\main.rs"))
+        self.assertFalse(is_test_artifact_path("src/benchmarking.py"))
         self.assertFalse(is_test_artifact_path("rustls/src/conn.rs"))
 
     @patch("curation.swe_task_crawling.utils.wrapped_requests_get")
