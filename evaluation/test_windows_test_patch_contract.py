@@ -21,6 +21,7 @@ sys.modules.setdefault("datasets", datasets)
 
 from evaluation.windows_test_patch_contract import (
     added_go_test_functions,
+    touched_go_test_functions,
     windows_go_test_patch_contract_is_gradable,
 )
 
@@ -52,6 +53,52 @@ index 1111111..2222222 100644
             added_go_test_functions(self.PATCH),
             ["TestRegression", "TestOtherRegression"],
         )
+
+    def test_tracks_existing_test_body_from_hunk_context(self):
+        patch = """diff --git a/provisioner/powershell/provisioner_test.go b/provisioner/powershell/provisioner_test.go
+--- a/provisioner/powershell/provisioner_test.go
++++ b/provisioner/powershell/provisioner_test.go
+@@ -71,7 +71,6 @@ func TestProvisionerPrepare_extractScript(t *testing.T) {
+-\tassert.Equal(t, oldScript, actual)
++\tassert.Equal(t, newScript, actual)
+ }
+"""
+        self.assertEqual(touched_go_test_functions(patch), ["TestProvisionerPrepare_extractScript"])
+
+    def test_rejects_existing_test_absent_from_all_published_expected_names(self):
+        patch = """diff --git a/provisioner/powershell/provisioner_test.go b/provisioner/powershell/provisioner_test.go
+--- a/provisioner/powershell/provisioner_test.go
++++ b/provisioner/powershell/provisioner_test.go
+@@ -71,7 +71,6 @@ func TestProvisionerPrepare_extractScript(t *testing.T) {
+-\tassert.Equal(t, oldScript, actual)
++\tassert.Equal(t, newScript, actual)
+ }
+"""
+        instance = {
+            "test_patch": patch,
+            "PASS_TO_PASS": ["github.com/hashicorp/packer/command/TestUnrelated"],
+            "FAIL_TO_PASS": ["github.com/hashicorp/packer/fix/TestOther"],
+        }
+        self.assertEqual(
+            windows_go_test_patch_contract_is_gradable(instance, "windows"),
+            (False, ["TestProvisionerPrepare_extractScript"]),
+        )
+
+    def test_accepts_packer_style_expected_identity_from_pass_to_pass(self):
+        patch = """diff --git a/pkg/example_test.go b/pkg/example_test.go
+--- a/pkg/example_test.go
++++ b/pkg/example_test.go
+@@ -1,3 +1,3 @@ func TestTarget(t *testing.T) {
+-\tassert.Equal(t, old, got)
++\tassert.Equal(t, want, got)
+ }
+"""
+        instance = {
+            "test_patch": patch,
+            "PASS_TO_PASS": ["github.com/example/repo/pkg/TestTarget"],
+            "FAIL_TO_PASS": [],
+        }
+        self.assertEqual(windows_go_test_patch_contract_is_gradable(instance, "windows"), (True, []))
 
     def test_accepts_matching_test_or_subtest_and_ignores_other_platforms(self):
         instance = {
