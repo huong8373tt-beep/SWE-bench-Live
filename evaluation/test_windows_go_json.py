@@ -23,8 +23,8 @@ def test_extracts_only_explicit_terminal_test_events():
         ]
     )
     assert extract_go_json_test_keys(log) == {
-        "TestString",
-        "TestRunCommand",
+        "example/reportsizes::TestString",
+        "example/shell::TestRunCommand",
     }
 
 
@@ -36,13 +36,26 @@ def test_windows_filter_drops_ghost_parser_statuses_and_keeps_real_failures():
         ]
     )
     status = {
-        "TestDescription": "fail",
-        "TestString": "pass",
-        "TestPublishPipeError": "fail",
+        "example/reportsizes::TestDescription": "fail",
+        "example/reportsizes::TestString": "pass",
+        "example/ko::TestPublishPipeError": "fail",
     }
     assert filter_unsupported_go_json_status(status, log, "windows") == {
-        "TestString": "pass",
-        "TestPublishPipeError": "fail",
+        "example/reportsizes::TestString": "pass",
+        "example/ko::TestPublishPipeError": "fail",
+    }
+
+
+def test_keeps_same_test_name_separate_by_package():
+    log = "\n".join(
+        [
+            event("example/a", "pass", "TestSame"),
+            event("example/b", "fail", "TestSame"),
+        ]
+    )
+    assert extract_go_json_test_status(log) == {
+        "example/a::TestSame": "pass",
+        "example/b::TestSame": "fail",
     }
 
 
@@ -51,12 +64,12 @@ def test_wrapped_events_override_a_conflicting_parser_status():
         '{"Package":"example/test",\n'
         '"Action":"pass","Test":"TestGatewayTLSMixedIPAndDNS"}'
     )
-    status = {"TestGatewayTLSMixedIPAndDNS": "fail", "Ghost": "fail"}
+    status = {"example/test::TestGatewayTLSMixedIPAndDNS": "fail", "Ghost": "fail"}
     assert extract_go_json_test_status(wrapped_log) == {
-        "TestGatewayTLSMixedIPAndDNS": "pass"
+        "example/test::TestGatewayTLSMixedIPAndDNS": "pass"
     }
     assert filter_unsupported_go_json_status(status, wrapped_log, "windows") == {
-        "TestGatewayTLSMixedIPAndDNS": "pass"
+        "example/test::TestGatewayTLSMixedIPAndDNS": "pass"
     }
 
 

@@ -54,9 +54,9 @@ def extract_go_json_test_status(log: str) -> dict[str, TestStatus]:
 
     The Windows console can wrap JSON objects across physical lines.  Parsing
     complete objects also prevents a package-level event from being associated
-    with a later test by a DOTALL regular expression.  Test names are used as
-    keys because the evaluator's parser/status format is test-name-only; the
-    package is still required to identify a Go test event.
+    with a later test by a DOTALL regular expression.  Keys preserve the
+    evaluator's package-qualified ``Package::Test`` identity, so identical test
+    names in different Go packages remain distinct.
     """
     statuses: dict[str, TestStatus] = {}
     for event in _iter_json_objects(log):
@@ -65,14 +65,15 @@ def extract_go_json_test_status(log: str) -> dict[str, TestStatus]:
         action = str(event.get("Action", "")).lower()
         if not package or not test or action not in _TERMINAL_ACTIONS:
             continue
-        previous = statuses.get(test)
+        test_identity = f"{package}::{test}"
+        previous = statuses.get(test_identity)
         if previous is None or _STATUS_SEVERITY[action] > _STATUS_SEVERITY[previous]:
-            statuses[test] = action  # type: ignore[assignment]
+            statuses[test_identity] = action  # type: ignore[assignment]
     return statuses
 
 
 def extract_go_json_test_keys(log: str) -> set[str]:
-    """Return test names backed by explicit terminal Go JSON events."""
+    """Return package-qualified test identities backed by terminal Go JSON events."""
     return set(extract_go_json_test_status(log))
 
 
