@@ -60,3 +60,21 @@ def test_candidate_only_pass_to_pass_failure_still_fails(monkeypatch, tmp_path):
         "matching_baseline_failures": [],
         "candidate_only_failures": ["stable"],
     }
+
+
+def test_incomplete_fail_to_pass_does_not_start_baseline_control(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        evaluation,
+        "evaluate_instance",
+        lambda *args, **kwargs: {"target": "fail", "stable": "fail"},
+    )
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("baseline control must require a complete FAIL_TO_PASS pass")
+
+    monkeypatch.setattr(evaluation, "evaluate_baseline_instance", should_not_run)
+
+    report = evaluation.run_instance(_instance(), "linux", str(tmp_path), overwrite=True)
+
+    assert report["resolved"] is False
+    assert "baseline_control" not in report
