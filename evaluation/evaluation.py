@@ -6,6 +6,7 @@ import json
 import argparse
 import traceback
 import re
+import shlex
 from typing import Literal, TypedDict
 from datasets import load_dataset
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -117,13 +118,31 @@ def evaluate_instance(
     # Remember to rebuild after modifications to source codes !!!
     if rebuild_cmd.strip():
         container.send_command(rebuild_cmd)
+    # RepoLaunch exposes a task-specific faketime environment only when an
+    # evaluator explicitly requested a deterministic snapshot clock. Keep patch
+    # application and rebuilds on real filesystem time, then scope faketime to
+    # the test and log-collection commands.
     if not print_cmd.strip():
         # for backward compatibility with SWE-bench-Live/SWE-bench-Live (Python)
         container.send_command(f"cat > run_test.sh <<'CC_PROMPT'\n{test_cmd}\nCC_PROMPT\n")
         test_cmd = "bash run_test.sh > testlog.out 2>&1"
         print_cmd = "cat testlog.out"
-    container.send_command(test_cmd)
-    post_patch_log: str = container.send_command(print_cmd).output
+
+    def run_test_command(command: str):
+        if platform != "linux":
+            return container.send_command(command)
+        # RepoLaunch defines this shell function only for an explicitly requested
+        # evaluation clock. Do not replace the function with a fallback: that
+        # would disable faketime in the very runs that requested it.
+        shell_command = shlex.quote(command)
+        return container.send_command(
+            "if declare -F swe_bench_live_with_clock >/dev/null; then "
+            f"swe_bench_live_with_clock sh -lc {shell_command}; "
+            f"else sh -lc {shell_command}; fi"
+        )
+
+    run_test_command(test_cmd)
+    post_patch_log: str = run_test_command(print_cmd).output
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
         f.write(post_patch_log)
     if parser.lower().strip() == "pytest":
