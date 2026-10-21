@@ -137,8 +137,8 @@ def evaluate_instance(
         shell_command = shlex.quote(command)
         return container.send_command(
             "if declare -F swe_bench_live_with_clock >/dev/null; then "
-            f"swe_bench_live_with_clock sh -lc {shell_command}; "
-            f"else sh -lc {shell_command}; fi"
+            f"swe_bench_live_with_clock bash -lc {shell_command}; "
+            f"else bash -lc {shell_command}; fi"
         )
 
     run_test_command(test_cmd)

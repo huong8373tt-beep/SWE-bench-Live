@@ -49,8 +49,10 @@ def test_linux_clock_is_scoped_to_test_and_log_commands(tmp_path):
     assert runtime.patches == [("test-patch", False), ("candidate-patch", True)]
     assert runtime.commands[0] == "rebuild-command"
     assert "declare -F swe_bench_live_with_clock" in runtime.commands[1]
-    assert "swe_bench_live_with_clock sh -lc" in runtime.commands[1]
+    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[1]
     assert "run-tests --flag" in runtime.commands[1]
+    assert "else bash -lc" in runtime.commands[1]
     assert "declare -F swe_bench_live_with_clock" in runtime.commands[2]
+    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[2]
     assert "collect-log" in runtime.commands[2]
     assert runtime.cleaned_up
