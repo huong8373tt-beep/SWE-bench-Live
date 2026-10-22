@@ -7,6 +7,7 @@ import argparse
 import traceback
 import re
 import shlex
+import uuid
 from typing import Literal, TypedDict
 from datasets import load_dataset
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -145,8 +146,36 @@ def evaluate_instance(
             f"else bash -lc {shell_command}; fi"
         )
 
+    def collect_test_log(command: str) -> str:
+        """Collect Linux test output through the mounted host directory.
+
+        RepoLaunch's interactive PTY transport can stall when a task's print
+        command emits a very large log. Keep executing the dataset-provided
+        command in the same clock-scoped shell, but redirect its output to the
+        existing per-runtime mount and read it directly on the host.
+        """
+        if platform != "linux":
+            return run_test_command(command).output
+        log_name = f"swe_bench_live_eval_{uuid.uuid4().hex}.log"
+        host_log_path = os.path.join(container.mnt_host, log_name)
+        container_log_path = f"{container.mnt_container.rstrip('/')}/{log_name}"
+        redirected_command = f"{{ {command}; }} > {shlex.quote(container_log_path)} 2>&1"
+        result = run_test_command(redirected_command)
+        try:
+            with open(host_log_path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except FileNotFoundError:
+            # Preserve the previous behavior when a task-specific print command
+            # itself fails before creating output.
+            return result.output
+        finally:
+            try:
+                os.remove(host_log_path)
+            except FileNotFoundError:
+                pass
+
     run_test_command(test_cmd)
-    post_patch_log: str = run_test_command(print_cmd).output
+    post_patch_log: str = collect_test_log(print_cmd)
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
         f.write(post_patch_log)
     if parser.lower().strip() == "pytest":
