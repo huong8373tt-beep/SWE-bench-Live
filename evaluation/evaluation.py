@@ -146,21 +146,31 @@ def evaluate_instance(
             f"else bash -lc {shell_command}; fi"
         )
 
-    def collect_test_log(command: str) -> str:
-        """Collect Linux test output through the mounted host directory.
-
-        RepoLaunch's interactive PTY transport can stall when a task's print
-        command emits a very large log. Keep executing the dataset-provided
-        command in the same clock-scoped shell, but redirect its output to the
-        existing per-runtime mount and read it directly on the host.
-        """
+    def run_test_command_with_mounted_output(command: str):
+        """Run a Linux command without streaming a large output through the PTY."""
         if platform != "linux":
-            return run_test_command(command).output
+            return run_test_command(command), None
         log_name = f"swe_bench_live_eval_{uuid.uuid4().hex}.log"
         host_log_path = os.path.join(container.mnt_host, log_name)
         container_log_path = f"{container.mnt_container.rstrip('/')}/{log_name}"
         redirected_command = f"{{ {command}; }} > {shlex.quote(container_log_path)} 2>&1"
-        result = run_test_command(redirected_command)
+        return run_test_command(redirected_command), host_log_path
+
+    def run_test_command_quietly(command: str):
+        """Preserve test execution while keeping its full output off the PTY."""
+        result, host_log_path = run_test_command_with_mounted_output(command)
+        if host_log_path is not None:
+            try:
+                os.remove(host_log_path)
+            except FileNotFoundError:
+                pass
+        return result
+
+    def collect_test_log(command: str) -> str:
+        """Collect Linux print-command output through the mounted host directory."""
+        result, host_log_path = run_test_command_with_mounted_output(command)
+        if host_log_path is None:
+            return result.output
         try:
             with open(host_log_path, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
@@ -174,7 +184,7 @@ def evaluate_instance(
             except FileNotFoundError:
                 pass
 
-    run_test_command(test_cmd)
+    run_test_command_quietly(test_cmd)
     post_patch_log: str = collect_test_log(print_cmd)
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
         f.write(post_patch_log)
