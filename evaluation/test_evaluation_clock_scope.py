@@ -62,12 +62,14 @@ def test_linux_clock_is_scoped_to_test_and_log_commands(tmp_path):
     assert runtime.commands[1] == "rebuild-command"
     assert runtime.commands[2] == "git rev-parse --show-toplevel"
     assert "declare -F swe_bench_live_with_clock" in runtime.commands[3]
-    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[3]
+    assert "swe_bench_live_with_clock bash -c" in runtime.commands[3]
+    assert "bash -lc" not in runtime.commands[3]
     assert "run-tests --flag" in runtime.commands[3]
-    assert "else bash -lc" in runtime.commands[3]
+    assert "else bash -c" in runtime.commands[3]
     assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[3]
     assert "declare -F swe_bench_live_with_clock" in runtime.commands[4]
-    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[4]
+    assert "swe_bench_live_with_clock bash -c" in runtime.commands[4]
+    assert "bash -lc" not in runtime.commands[4]
     assert "collect-log" in runtime.commands[4]
     assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[4]
     parser.assert_called_once_with(
