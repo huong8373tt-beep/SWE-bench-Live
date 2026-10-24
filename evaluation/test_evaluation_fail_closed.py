@@ -77,6 +77,37 @@ class FailClosedEvaluationTests(unittest.TestCase):
         self.assertEqual(runtime.commands, [])
         self.assertTrue(runtime.cleaned_up)
 
+    def test_root_change_after_rebuild_stops_before_test(self):
+        runtime = FakeRuntime([True, True])
+        roots = iter(["/testbed\n", "/different-worktree\n"])
+
+        def send_command(command):
+            runtime.commands.append(command)
+            if command == "git rev-parse --show-toplevel":
+                return SimpleNamespace(output=next(roots), metadata=SimpleNamespace(exit_code=0))
+            return SimpleNamespace(output="", metadata=SimpleNamespace(exit_code=0))
+
+        runtime.send_command = send_command
+        with patch.object(evaluation.SetupRuntime, "from_launch_image", return_value=runtime):
+            with self.assertRaisesRegex(evaluation.EvaluationInfrastructureError, "not patched root"):
+                evaluation.evaluate_instance(
+                    "example__root-change",
+                    "example-image",
+                    "rebuild-command",
+                    "run-tests",
+                    "collect-log",
+                    "test-patch",
+                    "candidate-patch",
+                    "custom",
+                    "linux",
+                    tempfile.gettempdir(),
+                )
+        self.assertEqual(
+            runtime.commands,
+            ["git rev-parse --show-toplevel", "rebuild-command", "git rev-parse --show-toplevel"],
+        )
+        self.assertTrue(runtime.cleaned_up)
+
     def test_unmatched_parser_output_is_an_evaluator_contract_error(self):
         instance = {
             "instance_id": "example__project-1",

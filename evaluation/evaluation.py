@@ -9,6 +9,7 @@ import json
 import argparse
 import traceback
 import re
+import ntpath
 import shlex
 import uuid
 from typing import Literal, TypedDict
@@ -23,6 +24,40 @@ COMMAND_TIMEOUT_MINUTES = 150
 
 class EvaluationContractError(RuntimeError):
     """The evaluator could not observe a scoreable test contract."""
+
+
+class EvaluationInfrastructureError(RuntimeError):
+    """The evaluator could not establish a trustworthy patched worktree."""
+
+
+def _windows_path_equal(left: str, right: str) -> bool:
+    return ntpath.normcase(ntpath.normpath(left)) == ntpath.normcase(ntpath.normpath(right))
+
+
+def _raise_root_identity_error(container, message: str) -> None:
+    try:
+        container.cleanup()
+    except Exception:
+        pass
+    raise EvaluationInfrastructureError(message)
+
+
+def _effective_repository_root(container) -> str:
+    result = container.send_command("git rev-parse --show-toplevel")
+    if int(getattr(getattr(result, "metadata", None), "exit_code", 1)) != 0 or not (result.output or "").strip():
+        _raise_root_identity_error(container, "cannot determine repository root after patch application")
+    return (result.output or "").strip().splitlines()[-1].strip()
+
+
+def _assert_grading_root(container, expected_root: str, platform: Literal["windows", "linux"], instance_id: str) -> None:
+    """Fail closed if rebuild commands move grading to another Git worktree."""
+    actual_root = _effective_repository_root(container)
+    same_root = _windows_path_equal(actual_root, expected_root) if platform == "windows" else actual_root == expected_root
+    if not same_root:
+        _raise_root_identity_error(
+            container,
+            f"{instance_id} grading commands would run from repository root {actual_root!r}, not patched root {expected_root!r}",
+        )
 
 
 def validate_solution_patch_format(solution_patch: str) -> dict | None:
@@ -183,9 +218,12 @@ def evaluate_instance(
     if not container.apply_patch(solution_patch, verbose=True):
         container.cleanup()
         raise RuntimeError(f"Candidate patch did not apply cleanly for {instance_id}")
-    # Remember to rebuild after modifications to source codes !!!
+    patched_root = _effective_repository_root(container)
+    # Rebuild commands may intentionally change directory. The test and log
+    # commands must still execute in the Git worktree that received both patches.
     if rebuild_cmd.strip():
         container.send_command(rebuild_cmd)
+    _assert_grading_root(container, patched_root, platform, instance_id)
     # RepoLaunch exposes a task-specific faketime environment only when an
     # evaluator explicitly requested a deterministic snapshot clock. Keep patch
     # application and rebuilds on real filesystem time, then scope faketime to

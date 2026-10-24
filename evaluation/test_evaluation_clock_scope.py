@@ -27,11 +27,13 @@ class FakeRuntime:
 
     def send_command(self, command):
         self.commands.append(command)
+        if command == "git rev-parse --show-toplevel":
+            return SimpleNamespace(output="/testbed\n", metadata=SimpleNamespace(exit_code=0))
         match = re.search(r"> /mnt_tmp/(swe_bench_live_eval_[0-9a-f]+\.log) 2>&1", command)
         if match:
             content = self.collected_log if "collect-log" in command else self.test_log
             (Path(self.mnt_host) / match.group(1)).write_text(content, encoding="utf-8")
-        return SimpleNamespace(output="")
+        return SimpleNamespace(output="", metadata=SimpleNamespace(exit_code=0))
 
     def cleanup(self):
         self.cleaned_up = True
@@ -56,16 +58,18 @@ def test_linux_clock_is_scoped_to_test_and_log_commands(tmp_path):
         )
 
     assert runtime.patches == [("test-patch", False), ("candidate-patch", True)]
-    assert runtime.commands[0] == "rebuild-command"
-    assert "declare -F swe_bench_live_with_clock" in runtime.commands[1]
-    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[1]
-    assert "run-tests --flag" in runtime.commands[1]
-    assert "else bash -lc" in runtime.commands[1]
-    assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[1]
-    assert "declare -F swe_bench_live_with_clock" in runtime.commands[2]
-    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[2]
-    assert "collect-log" in runtime.commands[2]
-    assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[2]
+    assert runtime.commands[0] == "git rev-parse --show-toplevel"
+    assert runtime.commands[1] == "rebuild-command"
+    assert runtime.commands[2] == "git rev-parse --show-toplevel"
+    assert "declare -F swe_bench_live_with_clock" in runtime.commands[3]
+    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[3]
+    assert "run-tests --flag" in runtime.commands[3]
+    assert "else bash -lc" in runtime.commands[3]
+    assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[3]
+    assert "declare -F swe_bench_live_with_clock" in runtime.commands[4]
+    assert "swe_bench_live_with_clock bash -lc" in runtime.commands[4]
+    assert "collect-log" in runtime.commands[4]
+    assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[4]
     parser.assert_called_once_with(
         "custom", "test execution output\n\ncollected test output\n"
     )
