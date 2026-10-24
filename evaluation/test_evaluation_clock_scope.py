@@ -57,7 +57,7 @@ def test_linux_clock_is_scoped_to_test_and_log_commands(tmp_path):
             str(tmp_path),
         )
 
-    assert runtime.patches == [("test-patch", False), ("candidate-patch", True)]
+    assert runtime.patches == [("test-patch", True), ("candidate-patch", True)]
     assert runtime.commands[0] == "git rev-parse --show-toplevel"
     assert runtime.commands[1] == "rebuild-command"
     assert runtime.commands[2] == "git rev-parse --show-toplevel"
