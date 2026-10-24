@@ -310,6 +310,91 @@ def normalize_test_identifier(test_name: str) -> str:
     return re.sub(r" \(\d+ ms\)$", "", test_name)
 
 
+def evaluate_baseline_instance(
+                    instance_id: str,
+                    image: str,
+                    rebuild_cmd: str,
+                    test_cmd: str,
+                    print_cmd: str,
+                    test_patch: str,
+                    parser: str,
+                    platform: Literal["windows", "linux"],
+                    output_dir: str,
+                    ) -> dict[str, Literal['pass', 'fail', 'skip']]:
+    """Replay the published test contract without the candidate patch.
+
+    This conditional control runs only after every FAIL_TO_PASS target passed
+    and candidate PASS_TO_PASS failures remain.  It uses the same fail-closed
+    patch, patched-worktree, clock, and mounted-log rules as candidate grading.
+    """
+    container: SetupRuntime = SetupRuntime.from_launch_image(
+        image, instance_id, platform, command_timeout=COMMAND_TIMEOUT_MINUTES
+    )
+    try:
+        if not container.apply_patch(test_patch, verbose=True):
+            raise RuntimeError(f"Benchmark test patch did not apply cleanly for baseline control {instance_id}")
+        patched_root = _effective_repository_root(container)
+        if rebuild_cmd.strip():
+            container.send_command(rebuild_cmd)
+        _assert_grading_root(container, patched_root, platform, instance_id)
+        if not print_cmd.strip():
+            container.send_command(f"cat > run_test.sh <<'CC_PROMPT'\n{test_cmd}\nCC_PROMPT\n")
+            test_cmd = "bash run_test.sh > testlog.out 2>&1"
+            print_cmd = "cat testlog.out"
+
+        def run_clock_scoped(command: str):
+            if platform != "linux":
+                return container.send_command(command)
+            shell_command = shlex.quote(command)
+            return container.send_command(
+                "if declare -F swe_bench_live_with_clock >/dev/null; then "
+                f"swe_bench_live_with_clock bash -lc {shell_command}; "
+                f"else bash -lc {shell_command}; fi"
+            )
+
+        def collect_log(command: str) -> tuple[str, int]:
+            if platform != "linux":
+                result = run_clock_scoped(command)
+                return result.output, int(getattr(getattr(result, "metadata", None), "exit_code", 0))
+            log_name = f"swe_bench_live_baseline_{uuid.uuid4().hex}.log"
+            host_log_path = os.path.join(container.mnt_host, log_name)
+            container_log_path = f"{container.mnt_container.rstrip('/')}/{log_name}"
+            result = run_clock_scoped(f"{{ {command}; }} > {shlex.quote(container_log_path)} 2>&1")
+            exit_code = int(getattr(getattr(result, "metadata", None), "exit_code", 0))
+            try:
+                with open(host_log_path, "r", encoding="utf-8", errors="replace") as handle:
+                    return handle.read(), exit_code
+            except FileNotFoundError:
+                return result.output, exit_code
+            finally:
+                try:
+                    os.remove(host_log_path)
+                except FileNotFoundError:
+                    pass
+
+        baseline_log, test_exit_code = collect_log(test_cmd)
+        if print_cmd.strip():
+            printed_log, _ = collect_log(print_cmd)
+            if printed_log:
+                baseline_log += printed_log if not baseline_log else "\n" + printed_log
+        with open(os.path.join(output_dir, "baseline_post_patch_log.txt"), "w", encoding="utf-8") as handle:
+            handle.write(baseline_log)
+        if parser.lower().strip() == "pytest":
+            baseline_status: dict[str, Literal['pass', 'fail', 'skip']] = default_pytest_parser(baseline_log)
+        else:
+            baseline_status = run_parser(parser, baseline_log)
+        if test_exit_code != 0:
+            baseline_status = {
+                test: "fail" if status == "pass" else status
+                for test, status in baseline_status.items()
+            }
+        with open(os.path.join(output_dir, "baseline_status.json"), "w", encoding="utf-8") as handle:
+            json.dump(baseline_status, handle, indent=True)
+        return baseline_status
+    finally:
+        container.cleanup()
+
+
 def run_instance(
                     instance: dict,
                     platform: Literal["windows","linux"],
@@ -401,6 +486,34 @@ def run_instance(
         and f2p:
         report["resolved"] = True
         print("Success!", instance["instance_id"], flush=True)
+    elif f2p and report["PASS_TO_PASS"]["failure"]:
+        baseline_status = evaluate_baseline_instance(
+            instance["instance_id"],
+            instance.get("docker_image", get_default_image_name(instance["instance_id"], platform)),
+            " ; ".join(instance.get("rebuild_cmds", [])),
+            " ; ".join(instance.get("test_cmds", [])),
+            " ; ".join(instance.get("print_cmds", [])),
+            instance["test_patch"],
+            instance.get("log_parser", instance.get("parser", "")),
+            platform,
+            instance_output_dir,
+        )
+        baseline_failures = {
+            test for test, status in baseline_status.items() if "fail" in status.lower()
+        }
+        candidate_failures = set(report["PASS_TO_PASS"]["failure"])
+        unchanged_baseline_failures = sorted(candidate_failures & baseline_failures)
+        candidate_only_failures = sorted(candidate_failures - baseline_failures)
+        report["baseline_control"] = {
+            "performed": True,
+            "matching_baseline_failures": unchanged_baseline_failures,
+            "candidate_only_failures": candidate_only_failures,
+        }
+        if not candidate_only_failures:
+            report["resolved"] = True
+            print("Success!", instance["instance_id"], "(baseline PASS_TO_PASS failures retained)", flush=True)
+        else:
+            print("Failed...", instance["instance_id"], flush=True)
     else:
         print("Failed...", instance["instance_id"], flush=True)
 
