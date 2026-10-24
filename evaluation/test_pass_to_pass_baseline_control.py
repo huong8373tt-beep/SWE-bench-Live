@@ -1,4 +1,12 @@
+import pytest
+
 from evaluation import evaluation
+
+
+@pytest.fixture(autouse=True)
+def valid_local_candidate_patch(monkeypatch):
+    """These unit cases exercise scoring, not the separate local patch-format gate."""
+    monkeypatch.setattr(evaluation, "validate_solution_patch_format", lambda _patch: None)
 
 
 def _instance():
