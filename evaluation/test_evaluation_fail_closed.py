@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -195,6 +196,43 @@ class FailClosedEvaluationTests(unittest.TestCase):
         self.assertEqual(report["FAIL_TO_PASS"]["success"], [])
         self.assertEqual(report["FAIL_TO_PASS"]["failure"], ["expected::fixed"])
         self.assertTrue(runtime.cleaned_up)
+
+    def test_failed_go_command_preserves_explicit_terminal_passes(self):
+        status = evaluation._demote_unproven_passes_after_failed_command(
+            {
+                "example.com/project/pkg/TestTarget": "pass",
+                "example.com/project/pkg/TestOther": "pass",
+                "example.com/project/pkg/TestSkipped": "skip",
+            },
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "Action": "output",
+                            "Package": "example.com/project/pkg",
+                            "Test": "TestTarget",
+                            "Output": "--- PASS: TestTarget (0.00s)\n",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "Action": "output",
+                            "Package": "example.com/project/pkg",
+                            "Output": "FAIL\texample.com/project/pkg\t0.01s\n",
+                        }
+                    ),
+                ]
+            ),
+        )
+
+        self.assertEqual(
+            status,
+            {
+                "example.com/project/pkg/TestTarget": "pass",
+                "example.com/project/pkg/TestOther": "fail",
+                "example.com/project/pkg/TestSkipped": "skip",
+            },
+        )
 
     def test_matching_parser_output_can_be_scored(self):
         instance = {

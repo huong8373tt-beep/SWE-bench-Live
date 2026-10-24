@@ -170,6 +170,44 @@ def default_pytest_parser(log: str) -> dict[str, str]:
             mapping[test] = 'fail'
     return mapping
 
+
+def _go_terminal_passes(log: str) -> set[str]:
+    """Collect Go tests with an explicit terminal PASS event in the log."""
+    terminal_passes: set[str] = set()
+    for line in log.splitlines():
+        output = line
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            event = None
+        if isinstance(event, dict):
+            output = str(event.get("Output", ""))
+        for match in re.finditer(r"--- PASS: ([^\r\n]+?)(?: \([^)]*\))?(?:\r?\n|$)", output):
+            terminal_passes.add(match.group(1).strip())
+    return terminal_passes
+
+
+def _matches_go_terminal_pass(test_name: str, terminal_pass: str) -> bool:
+    """Match evaluator package-qualified Go names to go test's short names."""
+    return test_name == terminal_pass or test_name.endswith("/" + terminal_pass)
+
+
+def _demote_unproven_passes_after_failed_command(
+    statuses: dict[str, Literal['pass', 'fail', 'skip']],
+    log: str,
+) -> dict[str, Literal['pass', 'fail', 'skip']]:
+    """Reject partial passes but retain explicit terminal Go test passes."""
+    terminal_passes = _go_terminal_passes(log)
+    return {
+        test: (
+            status
+            if status != "pass" or any(_matches_go_terminal_pass(test, passed) for passed in terminal_passes)
+            else "fail"
+        )
+        for test, status in statuses.items()
+    }
+
+
 def get_default_image_name(instance_id: str, platform: Literal["windows", "linux"]) -> str:
     if platform == "linux":
         med = "x86_64"
@@ -296,10 +334,10 @@ def evaluate_instance(
         # A failed aggregate command may contain partial parser output. Those
         # partial passes are not sufficient evidence for FAIL_TO_PASS or
         # PASS_TO_PASS success; preserve explicit skips for reporting.
-        post_patch_status = {
-            test: "fail" if status == "pass" else status
-            for test, status in post_patch_status.items()
-        }
+        post_patch_status = _demote_unproven_passes_after_failed_command(
+            post_patch_status,
+            post_patch_log,
+        )
     container.cleanup()
     with open(os.path.join(output_dir, "status.json"), "w", encoding="utf-8") as f:
         json.dump(post_patch_status, f, indent = True)
@@ -384,10 +422,10 @@ def evaluate_baseline_instance(
         else:
             baseline_status = run_parser(parser, baseline_log)
         if test_exit_code != 0:
-            baseline_status = {
-                test: "fail" if status == "pass" else status
-                for test, status in baseline_status.items()
-            }
+            baseline_status = _demote_unproven_passes_after_failed_command(
+                baseline_status,
+                baseline_log,
+            )
         with open(os.path.join(output_dir, "baseline_status.json"), "w", encoding="utf-8") as handle:
             json.dump(baseline_status, handle, indent=True)
         return baseline_status
