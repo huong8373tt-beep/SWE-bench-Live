@@ -18,6 +18,7 @@ class FakeRuntime:
         self.cleaned_up = False
         self.mnt_host = str(mount_path)
         self.mnt_container = "/mnt_tmp"
+        self.test_log = "test execution output\n"
         self.collected_log = "collected test output\n"
 
     def apply_patch(self, patch, verbose=False):
@@ -28,7 +29,8 @@ class FakeRuntime:
         self.commands.append(command)
         match = re.search(r"> /mnt_tmp/(swe_bench_live_eval_[0-9a-f]+\.log) 2>&1", command)
         if match:
-            (Path(self.mnt_host) / match.group(1)).write_text(self.collected_log, encoding="utf-8")
+            content = self.collected_log if "collect-log" in command else self.test_log
+            (Path(self.mnt_host) / match.group(1)).write_text(content, encoding="utf-8")
         return SimpleNamespace(output="")
 
     def cleanup(self):
@@ -64,6 +66,8 @@ def test_linux_clock_is_scoped_to_test_and_log_commands(tmp_path):
     assert "swe_bench_live_with_clock bash -lc" in runtime.commands[2]
     assert "collect-log" in runtime.commands[2]
     assert "> /mnt_tmp/swe_bench_live_eval_" in runtime.commands[2]
-    parser.assert_called_once_with("custom", "collected test output\n")
+    parser.assert_called_once_with(
+        "custom", "test execution output\n\ncollected test output\n"
+    )
     assert list(tmp_path.glob("swe_bench_live_eval_*.log")) == []
     assert runtime.cleaned_up

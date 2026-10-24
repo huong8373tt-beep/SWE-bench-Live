@@ -164,18 +164,8 @@ def evaluate_instance(
         redirected_command = f"{{ {command}; }} > {shlex.quote(container_log_path)} 2>&1"
         return run_test_command(redirected_command), host_log_path
 
-    def run_test_command_quietly(command: str):
-        """Preserve test execution while keeping its full output off the PTY."""
-        result, host_log_path = run_test_command_with_mounted_output(command)
-        if host_log_path is not None:
-            try:
-                os.remove(host_log_path)
-            except FileNotFoundError:
-                pass
-        return result
-
     def collect_test_log(command: str) -> str:
-        """Collect Linux print-command output through the mounted host directory."""
+        """Collect Linux command output through the mounted host directory."""
         result, host_log_path = run_test_command_with_mounted_output(command)
         if host_log_path is None:
             return result.output
@@ -183,8 +173,8 @@ def evaluate_instance(
             with open(host_log_path, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
         except FileNotFoundError:
-            # Preserve the previous behavior when a task-specific print command
-            # itself fails before creating output.
+            # Preserve the previous behavior when a task-specific command fails
+            # before creating output.
             return result.output
         finally:
             try:
@@ -192,8 +182,15 @@ def evaluate_instance(
             except FileNotFoundError:
                 pass
 
-    run_test_command_quietly(test_cmd)
-    post_patch_log: str = collect_test_log(print_cmd)
+    # The test command itself is the primary evidence.  Earlier PTY-avoidance
+    # code discarded that mounted output and relied only on print_cmd; many Go
+    # tasks therefore produced an empty parser input. Keep both sources off the
+    # PTY and append print_cmd output only when it contributes additional text.
+    post_patch_log: str = collect_test_log(test_cmd)
+    if print_cmd.strip():
+        printed_log = collect_test_log(print_cmd)
+        if printed_log:
+            post_patch_log += printed_log if not post_patch_log else "\n" + printed_log
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
         f.write(post_patch_log)
     if parser.lower().strip() == "pytest":
