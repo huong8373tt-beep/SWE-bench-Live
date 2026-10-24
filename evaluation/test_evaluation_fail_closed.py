@@ -91,7 +91,9 @@ class FailClosedEvaluationTests(unittest.TestCase):
             "FAIL_TO_PASS": ["expected::fixed"],
         }
         with tempfile.TemporaryDirectory() as output_dir:
-            with patch.object(evaluation, "evaluate_instance", return_value={"unrelated::test": "pass"}):
+            with patch.object(evaluation, "validate_solution_patch_format", return_value=None), patch.object(
+                evaluation, "evaluate_instance", return_value={"unrelated::test": "pass"}
+            ):
                 with self.assertRaisesRegex(evaluation.EvaluationContractError, "matched none"):
                     evaluation.run_instance(instance, "linux", output_dir, True)
 
@@ -101,6 +103,67 @@ class FailClosedEvaluationTests(unittest.TestCase):
         self.assertFalse(report["resolved"])
         self.assertFalse(report["evaluation_contract"]["valid"])
         self.assertEqual(report["evaluation_contract"]["matched_expected_tests"], 0)
+
+    def test_malformed_candidate_patch_is_not_evaluated(self):
+        instance = {
+            "instance_id": "example__malformed-candidate",
+            "docker_image": "example-image",
+            "rebuild_cmds": [],
+            "test_cmds": [],
+            "print_cmds": [],
+            "test_patch": "test-patch",
+            "pred_patch": "diff --git a/a b/a\n--- a/a\n+++ b/a",
+            "log_parser": "custom",
+            "PASS_TO_PASS": [],
+            "FAIL_TO_PASS": [],
+        }
+        with tempfile.TemporaryDirectory() as output_dir:
+            with patch.object(
+                evaluation,
+                "evaluate_instance",
+                side_effect=AssertionError("malformed candidate must not start evaluation"),
+            ):
+                report = evaluation.run_instance(instance, "linux", output_dir, True)
+        self.assertIsNone(report["resolved"])
+        self.assertEqual(report["grading_status"], "not_evaluated")
+        self.assertEqual(report["failure_class"], "local_candidate_patch_preflight_failed")
+        self.assertIn("missing_terminal_newline", report["candidate_patch_preflight"]["reasons"])
+
+    def test_failed_test_command_cannot_score_partial_passes(self):
+        instance = {
+            "instance_id": "example__failed-command",
+            "docker_image": "example-image",
+            "rebuild_cmds": [],
+            "test_cmds": ["run-tests"],
+            "print_cmds": ["collect-log"],
+            "test_patch": "test-patch",
+            "pred_patch": "candidate-patch",
+            "log_parser": "custom",
+            "PASS_TO_PASS": ["expected::stable"],
+            "FAIL_TO_PASS": ["expected::fixed"],
+        }
+        runtime = FakeRuntime([True, True])
+
+        def send_command(command):
+            runtime.commands.append(command)
+            if command == "run-tests":
+                return SimpleNamespace(output="partial test output", metadata=SimpleNamespace(exit_code=1))
+            return SimpleNamespace(output="partial test output", metadata=SimpleNamespace(exit_code=0))
+
+        runtime.send_command = send_command
+        with tempfile.TemporaryDirectory() as output_dir:
+            with patch.object(evaluation.SetupRuntime, "from_launch_image", return_value=runtime), patch.object(
+                evaluation, "validate_solution_patch_format", return_value=None
+            ), patch.object(
+                evaluation,
+                "run_parser",
+                return_value={"expected::fixed": "pass", "expected::stable": "skip"},
+            ):
+                report = evaluation.run_instance(instance, "windows", output_dir, True)
+        self.assertFalse(report["resolved"])
+        self.assertEqual(report["FAIL_TO_PASS"]["success"], [])
+        self.assertEqual(report["FAIL_TO_PASS"]["failure"], ["expected::fixed"])
+        self.assertTrue(runtime.cleaned_up)
 
     def test_matching_parser_output_can_be_scored(self):
         instance = {
@@ -116,7 +179,7 @@ class FailClosedEvaluationTests(unittest.TestCase):
             "FAIL_TO_PASS": ["expected::fixed"],
         }
         with tempfile.TemporaryDirectory() as output_dir:
-            with patch.object(
+            with patch.object(evaluation, "validate_solution_patch_format", return_value=None), patch.object(
                 evaluation,
                 "evaluate_instance",
                 return_value={"expected::stable": "pass", "expected::fixed": "pass"},

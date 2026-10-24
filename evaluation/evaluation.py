@@ -1,4 +1,7 @@
 import sys, os
+import hashlib
+import subprocess
+import tempfile
 sys.path.insert(0, os.path.join(os.getcwd(), "launch"))
 from launch.core.runtime import SetupRuntime
 from launch.scripts.parser import run_parser
@@ -20,6 +23,58 @@ COMMAND_TIMEOUT_MINUTES = 150
 
 class EvaluationContractError(RuntimeError):
     """The evaluator could not observe a scoreable test contract."""
+
+
+def validate_solution_patch_format(solution_patch: str) -> dict | None:
+    """Reject malformed local candidate artifacts before starting a task container.
+
+    This is strict syntax validation of the local model-patch artifact only. It
+    does not inspect a benchmark checkout, hidden test material, or score a task.
+    """
+    raw = str(solution_patch or "").encode("utf-8")
+    evidence = {
+        "validator": "git apply --stat --no-summary",
+        "candidate_sha256": hashlib.sha256(raw).hexdigest(),
+        "candidate_bytes": len(raw),
+        "terminal_newline": raw.endswith(b"\n"),
+    }
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".patch", delete=False) as handle:
+            handle.write(raw)
+            temporary_path = handle.name
+        completed = subprocess.run(
+            ["git", "apply", "--stat", "--no-summary", temporary_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {**evidence, "reasons": ["candidate_patch_preflight_unavailable"], "error": str(exc)}
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+    reasons = []
+    if not raw.endswith(b"\n"):
+        reasons.append("missing_terminal_newline")
+    if completed.returncode != 0:
+        reasons.append("git_apply_stat_rejected_patch")
+    if not reasons:
+        return None
+    return {
+        **evidence,
+        "exit_code": completed.returncode,
+        "reasons": reasons,
+        "stdout": completed.stdout[-4000:],
+        "stderr": completed.stderr[-4000:],
+    }
 
 
 def normalize_month(month: str) -> str:
@@ -164,31 +219,32 @@ def evaluate_instance(
         redirected_command = f"{{ {command}; }} > {shlex.quote(container_log_path)} 2>&1"
         return run_test_command(redirected_command), host_log_path
 
-    def collect_test_log(command: str) -> str:
-        """Collect Linux command output through the mounted host directory."""
+    def collect_test_log(command: str) -> tuple[str, int]:
+        """Collect Linux command output and preserve the command's exit status."""
         result, host_log_path = run_test_command_with_mounted_output(command)
+        exit_code = int(getattr(getattr(result, "metadata", None), "exit_code", 0))
         if host_log_path is None:
-            return result.output
+            return result.output, exit_code
         try:
             with open(host_log_path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
+                return f.read(), exit_code
         except FileNotFoundError:
-            # Preserve the previous behavior when a task-specific command fails
-            # before creating output.
-            return result.output
+            # Preserve the command transcript when a task-specific command fails
+            # before it creates the redirected log file.
+            return result.output, exit_code
         finally:
             try:
                 os.remove(host_log_path)
             except FileNotFoundError:
                 pass
 
-    # The test command itself is the primary evidence.  Earlier PTY-avoidance
+    # The test command itself is the primary evidence. Earlier PTY-avoidance
     # code discarded that mounted output and relied only on print_cmd; many Go
     # tasks therefore produced an empty parser input. Keep both sources off the
     # PTY and append print_cmd output only when it contributes additional text.
-    post_patch_log: str = collect_test_log(test_cmd)
+    post_patch_log, test_exit_code = collect_test_log(test_cmd)
     if print_cmd.strip():
-        printed_log = collect_test_log(print_cmd)
+        printed_log, _ = collect_test_log(print_cmd)
         if printed_log:
             post_patch_log += printed_log if not post_patch_log else "\n" + printed_log
     with open(os.path.join(output_dir, "post_patch_log.txt"), "w", encoding="utf-8") as f:
@@ -198,6 +254,14 @@ def evaluate_instance(
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = default_pytest_parser(post_patch_log)
     else:
         post_patch_status: dict[str, Literal['pass', 'fail', 'skip']] = run_parser(parser, post_patch_log)
+    if test_exit_code != 0:
+        # A failed aggregate command may contain partial parser output. Those
+        # partial passes are not sufficient evidence for FAIL_TO_PASS or
+        # PASS_TO_PASS success; preserve explicit skips for reporting.
+        post_patch_status = {
+            test: "fail" if status == "pass" else status
+            for test, status in post_patch_status.items()
+        }
     container.cleanup()
     with open(os.path.join(output_dir, "status.json"), "w", encoding="utf-8") as f:
         json.dump(post_patch_status, f, indent = True)
@@ -231,6 +295,19 @@ def run_instance(
         print("Incomplete...", instance["instance_id"], flush=True)
         return {"instance_id": instance["instance_id"], "resolved": None}
     os.makedirs(instance_output_dir, exist_ok=True)
+    patch_preflight = validate_solution_patch_format(instance["pred_patch"])
+    if patch_preflight is not None:
+        report = {
+            "instance_id": instance["instance_id"],
+            "resolved": None,
+            "grading_status": "not_evaluated",
+            "failure_class": "local_candidate_patch_preflight_failed",
+            "candidate_patch_preflight": patch_preflight,
+        }
+        with open(report_dir, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=True)
+        print("Invalid candidate artifact...", instance["instance_id"], flush=True)
+        return report
     res: dict[str, Literal['pass', 'fail', 'skip']] = evaluate_instance(
             instance["instance_id"],
             instance.get("docker_image", get_default_image_name(instance["instance_id"], platform)),
