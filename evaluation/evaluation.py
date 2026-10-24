@@ -18,6 +18,10 @@ from enum import Enum
 COMMAND_TIMEOUT_MINUTES = 150
 
 
+class EvaluationContractError(RuntimeError):
+    """The evaluator could not observe a scoreable test contract."""
+
+
 def normalize_month(month: str) -> str:
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise ValueError(f"Invalid month format: {month}. Expected YYYY-MM.")
@@ -118,8 +122,12 @@ def evaluate_instance(
     container: SetupRuntime = SetupRuntime.from_launch_image(
         image, instance_id, platform, command_timeout=COMMAND_TIMEOUT_MINUTES
     )
-    container.apply_patch(test_patch)
-    container.apply_patch(solution_patch, verbose=True)
+    if not container.apply_patch(test_patch, verbose=True):
+        container.cleanup()
+        raise RuntimeError(f"Benchmark test patch did not apply cleanly for {instance_id}")
+    if not container.apply_patch(solution_patch, verbose=True):
+        container.cleanup()
+        raise RuntimeError(f"Candidate patch did not apply cleanly for {instance_id}")
     # Remember to rebuild after modifications to source codes !!!
     if rebuild_cmd.strip():
         container.send_command(rebuild_cmd)
@@ -242,18 +250,38 @@ def run_instance(
     fail = {normalize_test_identifier(test) for test, status in res.items() if 'fail' in status.lower()}
     pass_to_pass = {normalize_test_identifier(test) for test in instance["PASS_TO_PASS"]}
     fail_to_pass = {normalize_test_identifier(test) for test in instance["FAIL_TO_PASS"]}
+    expected_tests = pass_to_pass | fail_to_pass
+    observed_tests = {normalize_test_identifier(test) for test in res}
+    matched_tests = observed_tests & expected_tests
+    contract = {
+        "valid": bool(expected_tests) and bool(observed_tests) and bool(matched_tests),
+        "expected_tests": len(expected_tests),
+        "observed_tests": len(observed_tests),
+        "matched_expected_tests": len(matched_tests),
+    }
     report = {
         "instance_id": instance["instance_id"],
         "resolved": False,
+        "evaluation_contract": contract,
         "PASS_TO_PASS": {
             "success": list(suc & pass_to_pass),
             "failure": list(fail & pass_to_pass),
-        }, 
+        },
         "FAIL_TO_PASS": {
             "success": list(suc & fail_to_pass),
             "failure": list(fail & fail_to_pass),
         },
     }
+    if not contract["valid"]:
+        with open(report_dir, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=True)
+        raise EvaluationContractError(
+            f"Unscoreable evaluator output for {instance['instance_id']}: "
+            f"expected={contract['expected_tests']}, "
+            f"observed={contract['observed_tests']}, "
+            f"matched={contract['matched_expected_tests']} (matched none)"
+        )
+
     f2p = fail_to_pass.issubset(set(report["FAIL_TO_PASS"]["success"])) \
         or (len(report["FAIL_TO_PASS"]["success"]) == len(fail_to_pass))
     if (len(report["PASS_TO_PASS"]["failure"]) == 0) \
@@ -265,7 +293,7 @@ def run_instance(
         print("Failed...", instance["instance_id"], flush=True)
 
     with open(report_dir, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent = True)
+        json.dump(report, f, indent=True)
     return report
 
 def run_instances(instances: list[dict[str, str]],

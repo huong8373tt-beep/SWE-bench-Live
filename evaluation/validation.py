@@ -36,6 +36,18 @@ def compare(execution_res: ExecutionResult) -> ValidationResult:
         "FAIL_TO_PASS": list(post_pass-pre_pass)
     }
 
+def apply_required_patch(
+                    container: SetupRuntime,
+                    patch: str,
+                    patch_kind: str,
+                    instance_id: str,
+                    ) -> None:
+    if container.apply_patch(patch, verbose=True):
+        return
+    container.cleanup()
+    raise RuntimeError(f"{patch_kind} patch did not apply cleanly for {instance_id}")
+
+
 def validate_instance(  
                     instance_id: str,
                     image: str, 
@@ -51,7 +63,7 @@ def validate_instance(
     container: SetupRuntime = SetupRuntime.from_launch_image(
         image, instance_id, platform, command_timeout=COMMAND_TIMEOUT_MINUTES
     )
-    container.apply_patch(test_patch, verbose=True)
+    apply_required_patch(container, test_patch, "Benchmark test", instance_id)
     # Remember to rebuild after modifications to source codes !!!
     container.send_command(rebuild_cmd)
     container.send_command(test_cmd)
@@ -70,8 +82,8 @@ def validate_instance(
         container: SetupRuntime = SetupRuntime.from_launch_image(
             image, instance_id, platform, command_timeout=COMMAND_TIMEOUT_MINUTES
         )
-        container.apply_patch(test_patch, verbose=True)
-        container.apply_patch(solution_patch, verbose=True)
+        apply_required_patch(container, test_patch, "Benchmark test", instance_id)
+        apply_required_patch(container, solution_patch, "Reference solution", instance_id)
         container.send_command(rebuild_cmd)
         container.send_command(test_cmd)
         post_patch_log: str = container.send_command(print_cmd).output
