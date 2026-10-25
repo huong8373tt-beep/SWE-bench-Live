@@ -181,6 +181,9 @@ def _go_terminal_passes(log: str) -> set[str]:
         except json.JSONDecodeError:
             event = None
         if isinstance(event, dict):
+            test = event.get("Test")
+            if event.get("Action") == "pass" and isinstance(test, str) and test.strip():
+                terminal_passes.add(test.strip())
             output = str(event.get("Output", ""))
         for match in re.finditer(r"--- PASS: ([^\r\n]+?)(?: \([^)]*\))?(?:\r?\n|$)", output):
             terminal_passes.add(match.group(1).strip())
@@ -193,6 +196,7 @@ def _matches_go_terminal_pass(test_name: str, terminal_pass: str) -> bool:
         test_name == terminal_pass
         or test_name.endswith("/" + terminal_pass)
         or test_name.endswith("." + terminal_pass)
+        or test_name.endswith("::" + terminal_pass)
     )
 
 

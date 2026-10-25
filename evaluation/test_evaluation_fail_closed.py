@@ -202,6 +202,7 @@ class FailClosedEvaluationTests(unittest.TestCase):
             {
                 "example.com/project/pkg/TestTarget": "pass",
                 "example.com/project/pkg.TestTarget": "pass",
+                "example.com/project/pkg::TestTarget": "pass",
                 "example.com/project/pkg/TestOther": "pass",
                 "example.com/project/pkg/TestSkipped": "skip",
             },
@@ -209,10 +210,10 @@ class FailClosedEvaluationTests(unittest.TestCase):
                 [
                     json.dumps(
                         {
-                            "Action": "output",
+                            "Action": "pass",
                             "Package": "example.com/project/pkg",
                             "Test": "TestTarget",
-                            "Output": "--- PASS: TestTarget (0.00s)\n",
+                            "Elapsed": 0,
                         }
                     ),
                     json.dumps(
@@ -231,6 +232,7 @@ class FailClosedEvaluationTests(unittest.TestCase):
             {
                 "example.com/project/pkg/TestTarget": "pass",
                 "example.com/project/pkg.TestTarget": "pass",
+                "example.com/project/pkg::TestTarget": "pass",
                 "example.com/project/pkg/TestOther": "fail",
                 "example.com/project/pkg/TestSkipped": "skip",
             },
