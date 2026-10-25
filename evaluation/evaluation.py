@@ -189,7 +189,11 @@ def _go_terminal_passes(log: str) -> set[str]:
 
 def _matches_go_terminal_pass(test_name: str, terminal_pass: str) -> bool:
     """Match evaluator package-qualified Go names to go test's short names."""
-    return test_name == terminal_pass or test_name.endswith("/" + terminal_pass)
+    return (
+        test_name == terminal_pass
+        or test_name.endswith("/" + terminal_pass)
+        or test_name.endswith("." + terminal_pass)
+    )
 
 
 def _demote_unproven_passes_after_failed_command(

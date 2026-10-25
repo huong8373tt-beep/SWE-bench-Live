@@ -201,6 +201,7 @@ class FailClosedEvaluationTests(unittest.TestCase):
         status = evaluation._demote_unproven_passes_after_failed_command(
             {
                 "example.com/project/pkg/TestTarget": "pass",
+                "example.com/project/pkg.TestTarget": "pass",
                 "example.com/project/pkg/TestOther": "pass",
                 "example.com/project/pkg/TestSkipped": "skip",
             },
@@ -229,6 +230,7 @@ class FailClosedEvaluationTests(unittest.TestCase):
             status,
             {
                 "example.com/project/pkg/TestTarget": "pass",
+                "example.com/project/pkg.TestTarget": "pass",
                 "example.com/project/pkg/TestOther": "fail",
                 "example.com/project/pkg/TestSkipped": "skip",
             },
