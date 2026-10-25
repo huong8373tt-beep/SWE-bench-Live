@@ -9,6 +9,7 @@ import json
 import argparse
 import traceback
 import re
+import xml.etree.ElementTree as ET
 import ntpath
 import shlex
 import uuid
@@ -200,16 +201,56 @@ def _matches_go_terminal_pass(test_name: str, terminal_pass: str) -> bool:
     )
 
 
+def _structured_terminal_statuses(log: str) -> dict[str, Literal['pass', 'fail', 'skip']]:
+    """Read complete JUnit-style terminal testcase statuses from concatenated XML."""
+    statuses: dict[str, Literal['pass', 'fail', 'skip']] = {}
+
+    def local(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1].lower()
+
+    for match in re.finditer(r"(<\?xml[^>]*\?>.*?)(?=(<\?xml|\Z))", log, re.DOTALL):
+        try:
+            root = ET.fromstring(match.group(1).strip())
+        except ET.ParseError:
+            continue
+        root_tag = local(root.tag)
+        suites = [root] if root_tag == "testsuite" else [child for child in root if local(child.tag) == "testsuite"] if root_tag == "testsuites" else []
+        for suite in suites:
+            suite_name = suite.attrib.get("name", "")
+            for testcase in suite:
+                if local(testcase.tag) != "testcase":
+                    continue
+                name = testcase.attrib.get("name", "")
+                if not name:
+                    continue
+                classname = testcase.attrib.get("classname", "")
+                identity = f"{classname}::{name}" if classname else (f"{suite_name}::{name}" if suite_name else name)
+                status: Literal['pass', 'fail', 'skip'] = "pass"
+                for child in testcase:
+                    child_tag = local(child.tag)
+                    if child_tag in {"failure", "error"}:
+                        status = "fail"
+                        break
+                    if child_tag == "skipped":
+                        status = "skip"
+                        break
+                statuses[identity] = status
+    return statuses
+
+
 def _demote_unproven_passes_after_failed_command(
     statuses: dict[str, Literal['pass', 'fail', 'skip']],
     log: str,
 ) -> dict[str, Literal['pass', 'fail', 'skip']]:
-    """Reject partial passes but retain explicit terminal Go test passes."""
+    """Reject partial passes but retain explicit terminal structured-test passes."""
     terminal_passes = _go_terminal_passes(log)
+    structured_statuses = _structured_terminal_statuses(log)
     return {
         test: (
             status
-            if status != "pass" or any(_matches_go_terminal_pass(test, passed) for passed in terminal_passes)
+            if status != "pass"
+            or any(_matches_go_terminal_pass(test, passed) for passed in terminal_passes)
+            or structured_statuses.get(test) == "pass"
             else "fail"
         )
         for test, status in statuses.items()

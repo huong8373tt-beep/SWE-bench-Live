@@ -238,6 +238,35 @@ class FailClosedEvaluationTests(unittest.TestCase):
             },
         )
 
+    def test_failed_command_preserves_junit_terminal_passes(self):
+        log = """<?xml version=\"1.0\"?>
+<testsuites><testsuite name=\"pkg\" tests=\"2\" failures=\"1\">
+  <testcase classname=\"example/pkg\" name=\"TestKept\" />
+  <testcase classname=\"example/pkg\" name=\"TestBroken\"><failure message=\"boom\">boom</failure></testcase>
+</testsuite></testsuites>
+<?xml version=\"1.0\"?>
+<testsuites><testsuite name=\"other\" tests=\"1\" failures=\"0\">
+  <testcase classname=\"example/other\" name=\"TestOther\" />
+</testsuite></testsuites>"""
+        status = evaluation._demote_unproven_passes_after_failed_command(
+            {
+                "example/pkg::TestKept": "pass",
+                "example/pkg::TestBroken": "pass",
+                "example/other::TestOther": "pass",
+                "unrelated::TestUnknown": "pass",
+            },
+            log,
+        )
+        self.assertEqual(
+            status,
+            {
+                "example/pkg::TestKept": "pass",
+                "example/pkg::TestBroken": "fail",
+                "example/other::TestOther": "pass",
+                "unrelated::TestUnknown": "fail",
+            },
+        )
+
     def test_matching_parser_output_can_be_scored(self):
         instance = {
             "instance_id": "example__project-1",
