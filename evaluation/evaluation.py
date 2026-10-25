@@ -45,14 +45,40 @@ def parse_log_pytest(log: str, test_spec: "TestSpec") -> dict[str, str]:
         XFAIL = "XFAIL"
     test_status_map = {}
     for line in log.split("\n"):
-        if any([line.startswith(x.value) for x in TestStatus]):
-            # Additional parsing for FAILED status
-            if line.startswith(TestStatus.FAILED.value):
-                line = line.replace(" - ", " ")
-            test_case = line.split()
-            if len(test_case) <= 1:
-                continue
-            test_status_map[test_case[1]] = test_case[0]
+        status = next((x.value for x in TestStatus if line.startswith(x.value)), None)
+        if status is None:
+            continue
+        remainder = line[len(status):].lstrip()
+        if not remainder:
+            continue
+
+        # Parametrized pytest node IDs may contain spaces inside ``[...]``.
+        # ``line.split()`` truncates those IDs and can make distinct cases
+        # collide. Preserve the complete bracketed node ID while retaining the
+        # historical first-token behavior for ordinary, non-parametrized lines.
+        if "[" in remainder and "]" in remainder:
+            # A node ID cannot contain whitespace outside its parameter
+            # brackets, so stop at the first separator after the matching
+            # closing bracket. This also removes pytest's trailing failure
+            # message or progress text without truncating IDs such as
+            # ``test_case[bytes data]``.
+            depth = 0
+            node_id_end = len(remainder)
+            saw_bracket = False
+            for index, character in enumerate(remainder):
+                if character == "[":
+                    depth += 1
+                    saw_bracket = True
+                elif character == "]" and depth:
+                    depth -= 1
+                elif saw_bracket and depth == 0 and character.isspace():
+                    node_id_end = index
+                    break
+            test_id = remainder[:node_id_end].strip()
+        else:
+            test_id = remainder.split(None, 1)[0]
+        if test_id:
+            test_status_map[test_id] = status
     return test_status_map
 
 
