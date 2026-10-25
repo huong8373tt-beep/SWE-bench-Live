@@ -394,8 +394,8 @@ def evaluate_baseline_instance(
             shell_command = shlex.quote(command)
             return container.send_command(
                 "if declare -F swe_bench_live_with_clock >/dev/null; then "
-                f"swe_bench_live_with_clock bash -lc {shell_command}; "
-                f"else bash -lc {shell_command}; fi"
+                f"swe_bench_live_with_clock bash -c {shell_command}; "
+                f"else bash -c {shell_command}; fi"
             )
 
         def collect_log(command: str) -> tuple[str, int]:
