@@ -308,8 +308,7 @@ def run_instance(
             f"expected={contract['expected_tests']}, observed={contract['observed_tests']}, "
             f"matched={contract['matched_expected_tests']}"
         )
-    f2p = set(instance["FAIL_TO_PASS"]).issubset(set(report["FAIL_TO_PASS"]["success"])) \
-        or (len(report["FAIL_TO_PASS"]["success"]) == len(instance["FAIL_TO_PASS"]))
+    f2p = fail_to_pass.issubset(set(report["FAIL_TO_PASS"]["success"]))
     if (len(report["PASS_TO_PASS"]["failure"]) == 0) \
         and (len(report["FAIL_TO_PASS"]["failure"]) == 0) \
         and f2p:
