@@ -38,7 +38,7 @@ class PatchApplicationContractTests(unittest.TestCase):
     def tearDown(self):
         evaluation.SetupRuntime = self.original_runtime
 
-    def _assert_stops_before_commands(self, patch_results, expected_error):
+    def _assert_stops_before_commands(self, patch_results, expected_error, expected_phase):
         container = _Container(patch_results)
 
         class _Runtime:
@@ -62,14 +62,19 @@ class PatchApplicationContractTests(unittest.TestCase):
                     output_dir=output_dir,
                 )
         self.assertEqual(ctx.exception.failure_class, "required_patch_application_failed")
+        self.assertEqual(ctx.exception.failure_phase, expected_phase)
         self.assertEqual(container.commands, [])
         self.assertTrue(container.cleaned)
 
     def test_failed_test_patch_stops_before_candidate_or_commands(self):
-        self._assert_stops_before_commands([False], "test patch failed to apply")
+        self._assert_stops_before_commands(
+            [False], "test patch failed to apply", "test_patch_from_image_base"
+        )
 
     def test_failed_solution_patch_stops_before_commands(self):
-        self._assert_stops_before_commands([True, False], "solution patch failed to apply")
+        self._assert_stops_before_commands(
+            [True, False], "solution patch failed to apply", "candidate_patch_after_test_patch"
+        )
 
     def test_run_instance_records_patch_failure_as_not_evaluated(self):
         instance = {

@@ -17,9 +17,16 @@ TIMEOUT = 150*60
 class EvaluationInfrastructureError(RuntimeError):
     """The evaluator could not establish a trustworthy task checkout."""
 
-    def __init__(self, failure_class: str, detail: str):
+    def __init__(
+        self,
+        failure_class: str,
+        detail: str,
+        *,
+        failure_phase: str | None = None,
+    ):
         self.failure_class = failure_class
         self.detail = detail
+        self.failure_phase = failure_phase or failure_class
         super().__init__(f"{failure_class}: {detail}")
 
 
@@ -88,6 +95,7 @@ def _require_patch_application(
     *,
     instance_id: str,
     patch_kind: str,
+    failure_phase: str,
     verbose: bool = False,
 ) -> None:
     """Apply a required patch or classify the task as not evaluated."""
@@ -101,6 +109,7 @@ def _require_patch_application(
     raise EvaluationInfrastructureError(
         "required_patch_application_failed",
         f"{patch_kind} patch failed to apply for {instance_id}; refusing to run build, test, or result commands.",
+        failure_phase=failure_phase,
     )
 
 
@@ -149,12 +158,14 @@ def evaluate_instance(
         test_patch,
         instance_id=instance_id,
         patch_kind="test",
+        failure_phase="test_patch_from_image_base",
     )
     _require_patch_application(
         container,
         solution_patch,
         instance_id=instance_id,
         patch_kind="solution",
+        failure_phase="candidate_patch_after_test_patch",
         verbose=True,
     )
     # Remember to rebuild after modifications to source codes !!!
@@ -221,6 +232,8 @@ def run_instance(
             "resolved": None,
             "grading_status": "not_evaluated",
             "failure_class": exc.failure_class,
+            "failure_phase": exc.failure_phase,
+            "patch_application_order": ["test_patch", "candidate_patch"],
             "error": exc.detail,
         }
         with open(report_dir, "w", encoding="utf-8") as f:
