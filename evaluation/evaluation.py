@@ -6,12 +6,56 @@ import json
 import argparse
 import traceback
 import re
+import hashlib
 from typing import Literal, TypedDict
 from datasets import load_dataset
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 
 TIMEOUT = 150*60
+
+
+class CandidateProvenanceError(RuntimeError):
+    """The supplied candidate is not independent of the evaluation reference."""
+
+
+def _patch_sha256(patch: str) -> str:
+    return hashlib.sha256(patch.encode("utf-8")).hexdigest()
+
+
+def _reference_patch_identity(instance: dict) -> dict[str, object]:
+    """Return auditable reference identity without changing the candidate text."""
+    gold = str(instance.get("patch", ""))
+    return {
+        "gold_patch_sha256": _patch_sha256(gold),
+        "gold_patch_bytes": len(gold.encode("utf-8")),
+    }
+
+
+def validate_candidate_provenance(instance: dict) -> dict[str, object]:
+    """Reject candidates that are byte-identical to the benchmark gold patch.
+
+    This is a provenance/integrity guard, not a grading relaxation: a patch that
+    exactly equals the reference can still be useful for gold controls, but it
+    must not be presented as an independently generated model answer.
+    """
+    candidate = str(instance.get("pred_patch", ""))
+    reference = _reference_patch_identity(instance)
+    candidate_sha = _patch_sha256(candidate)
+    candidate_bytes = len(candidate.encode("utf-8"))
+    result = {
+        "candidate_patch_sha256": candidate_sha,
+        "candidate_patch_bytes": candidate_bytes,
+        **reference,
+        "candidate_equals_gold": candidate_sha == reference["gold_patch_sha256"]
+        and candidate_bytes == reference["gold_patch_bytes"],
+    }
+    if result["candidate_equals_gold"]:
+        raise CandidateProvenanceError(
+            "candidate patch is byte-identical to the benchmark gold patch; "
+            "independent model provenance is unavailable"
+        )
+    return result
 
 
 def normalize_month(month: str) -> str:
@@ -159,6 +203,19 @@ def run_instance(
         print("Incomplete...", instance["instance_id"], flush=True)
         return {"instance_id": instance["instance_id"], "resolved": None}
     os.makedirs(instance_output_dir, exist_ok=True)
+    if instance.get("candidate_provenance_error"):
+        report = {
+            "instance_id": instance["instance_id"],
+            "resolved": None,
+            "grading_status": "not_evaluated",
+            "failure_class": "candidate_reference_leakage",
+            "error": instance["candidate_provenance_error"],
+            "candidate_provenance": instance.get("candidate_provenance", {}),
+        }
+        with open(report_dir, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=True)
+        print("Integrity error...", instance["instance_id"], "candidate_reference_leakage", flush=True)
+        return report
     res: dict[str, Literal['pass', 'fail', 'skip']] = evaluate_instance(
             instance["instance_id"],
             instance.get("docker_image", get_default_image_name(instance["instance_id"], platform)),
@@ -222,6 +279,7 @@ def run_instances(instances: list[dict[str, str]],
         "failure_ids": [],
         "error_ids": [],
         "incomplete_ids": [],
+        "infrastructure_error_ids": [],
     }
     with ThreadPoolExecutor(max_workers=workers) as executor:
         # Submit tasks to the executor
@@ -235,7 +293,9 @@ def run_instances(instances: list[dict[str, str]],
             instance = future_to_instance[future]
             try:
                 result = future.result()
-                if result["resolved"] is None:
+                if result.get("grading_status") == "not_evaluated":
+                    results["infrastructure_error_ids"].append(instance["instance_id"])
+                elif result["resolved"] is None:
                     results["incomplete_ids"].append(instance["instance_id"])
                 elif result["resolved"]:
                     results["success_ids"].append(instance["instance_id"])
@@ -248,6 +308,7 @@ def run_instances(instances: list[dict[str, str]],
     results["failure"] = len(results["failure_ids"])
     results["error"] = len(results["error_ids"])
     results["incomplete"] = len(results["incomplete_ids"])
+    results["infrastructure_error"] = len(results["infrastructure_error_ids"])
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "results.json"), "w", encoding="utf-8") as f:
         json.dump(results, f, indent = True)
@@ -313,6 +374,10 @@ def main(
             continue
         if patch_dir.strip() != "gold" and instance["instance_id"] in preds.keys():
             instance["pred_patch"] = preds[instance["instance_id"]]["model_patch"]
+            try:
+                instance["candidate_provenance"] = validate_candidate_provenance(instance)
+            except CandidateProvenanceError as exc:
+                instance["candidate_provenance_error"] = str(exc)
             todos.append(instance)
         elif patch_dir.strip() == "gold":
             instance["pred_patch"] = instance["patch"]
