@@ -14,6 +14,15 @@ from enum import Enum
 TIMEOUT = 150*60
 
 
+class EvaluationInfrastructureError(RuntimeError):
+    """The evaluator could not establish a trustworthy task checkout."""
+
+    def __init__(self, failure_class: str, detail: str):
+        self.failure_class = failure_class
+        self.detail = detail
+        super().__init__(f"{failure_class}: {detail}")
+
+
 def normalize_month(month: str) -> str:
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise ValueError(f"Invalid month format: {month}. Expected YYYY-MM.")
@@ -81,7 +90,7 @@ def _require_patch_application(
     patch_kind: str,
     verbose: bool = False,
 ) -> None:
-    """Apply a required patch or stop before commands grade an invalid revision."""
+    """Apply a required patch or classify the task as not evaluated."""
     if container.apply_patch(patch, verbose=verbose):
         return
     try:
@@ -89,8 +98,9 @@ def _require_patch_application(
     except Exception:
         # Keep the patch failure as the actionable error if cleanup also fails.
         pass
-    raise RuntimeError(
-        f"{patch_kind} patch failed to apply for {instance_id}; refusing to run build, test, or result commands."
+    raise EvaluationInfrastructureError(
+        "required_patch_application_failed",
+        f"{patch_kind} patch failed to apply for {instance_id}; refusing to run build, test, or result commands.",
     )
 
 
@@ -192,18 +202,31 @@ def run_instance(
         print("Incomplete...", instance["instance_id"], flush=True)
         return {"instance_id": instance["instance_id"], "resolved": None}
     os.makedirs(instance_output_dir, exist_ok=True)
-    res: dict[str, Literal['pass', 'fail', 'skip']] = evaluate_instance(
-            instance["instance_id"],
-            instance.get("docker_image", get_default_image_name(instance["instance_id"], platform)),
-            " ; ".join(instance.get("rebuild_cmds", [])),
-            " ; ".join(instance.get("test_cmds", [])),
-            " ; ".join(instance.get("print_cmds", [])),
-            instance["test_patch"],
-            instance["pred_patch"],
-            instance.get("log_parser", instance.get("parser", "")),
-            platform,
-            instance_output_dir
-    )
+    try:
+        res: dict[str, Literal['pass', 'fail', 'skip']] = evaluate_instance(
+                instance["instance_id"],
+                instance.get("docker_image", get_default_image_name(instance["instance_id"], platform)),
+                " ; ".join(instance.get("rebuild_cmds", [])),
+                " ; ".join(instance.get("test_cmds", [])),
+                " ; ".join(instance.get("print_cmds", [])),
+                instance["test_patch"],
+                instance["pred_patch"],
+                instance.get("log_parser", instance.get("parser", "")),
+                platform,
+                instance_output_dir
+        )
+    except EvaluationInfrastructureError as exc:
+        report = {
+            "instance_id": instance["instance_id"],
+            "resolved": None,
+            "grading_status": "not_evaluated",
+            "failure_class": exc.failure_class,
+            "error": exc.detail,
+        }
+        with open(report_dir, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=True)
+        print("Infrastructure error...", instance["instance_id"], exc.failure_class, flush=True)
+        return report
     suc = [test for test in res.keys() if 'pass' in res[test].lower()]
     fail = [test for test in res.keys() if 'fail' in res[test].lower()]
     report = {
@@ -255,6 +278,7 @@ def run_instances(instances: list[dict[str, str]],
         "failure_ids": [],
         "error_ids": [],
         "incomplete_ids": [],
+        "infrastructure_error_ids": [],
     }
     with ThreadPoolExecutor(max_workers=workers) as executor:
         # Submit tasks to the executor
@@ -268,7 +292,9 @@ def run_instances(instances: list[dict[str, str]],
             instance = future_to_instance[future]
             try:
                 result = future.result()
-                if result["resolved"] is None:
+                if result.get("grading_status") == "not_evaluated":
+                    results["infrastructure_error_ids"].append(instance["instance_id"])
+                elif result["resolved"] is None:
                     results["incomplete_ids"].append(instance["instance_id"])
                 elif result["resolved"]:
                     results["success_ids"].append(instance["instance_id"])
@@ -281,6 +307,7 @@ def run_instances(instances: list[dict[str, str]],
     results["failure"] = len(results["failure_ids"])
     results["error"] = len(results["error_ids"])
     results["incomplete"] = len(results["incomplete_ids"])
+    results["infrastructure_error"] = len(results["infrastructure_error_ids"])
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "results.json"), "w", encoding="utf-8") as f:
         json.dump(results, f, indent = True)
