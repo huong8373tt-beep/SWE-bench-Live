@@ -18,6 +18,10 @@ TIMEOUT = 150*60
 class CandidateProvenanceError(RuntimeError):
     """The supplied candidate is not independent of the evaluation reference."""
 
+    def __init__(self, detail: str, provenance: dict[str, object]):
+        self.provenance = provenance
+        super().__init__(detail)
+
 
 def _patch_sha256(patch: str) -> str:
     return hashlib.sha256(patch.encode("utf-8")).hexdigest()
@@ -70,7 +74,8 @@ def validate_candidate_provenance(instance: dict) -> dict[str, object]:
     if result["candidate_equals_gold_after_crlf_normalization"]:
         raise CandidateProvenanceError(
             "candidate patch is byte-identical to the benchmark gold patch after "
-            "CRLF-to-LF transport normalization; independent model provenance is unavailable"
+            "CRLF-to-LF transport normalization; independent model provenance is unavailable",
+            result,
         )
     return result
 
@@ -395,6 +400,7 @@ def main(
                 instance["candidate_provenance"] = validate_candidate_provenance(instance)
             except CandidateProvenanceError as exc:
                 instance["candidate_provenance_error"] = str(exc)
+                instance["candidate_provenance"] = exc.provenance
             todos.append(instance)
         elif patch_dir.strip() == "gold":
             instance["pred_patch"] = instance["patch"]
