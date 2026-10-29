@@ -81,23 +81,31 @@ def get_default_image_name(instance_id: str, platform: Literal["windows", "linux
     image = f"starryzhang/sweb.eval.{med}.{name}"
     return image
 
-def apply_solution_patch_best_effort(solution_patch: str, 
+class GoldReferenceControlUnavailable(RuntimeError):
+    """The published gold reference could not be replayed faithfully."""
+
+
+def apply_solution_patch_best_effort(solution_patch: str,
                                     container: SetupRuntime,
-                                    platform: Literal["windows", "linux"]) -> None:
+                                    platform: Literal["windows", "linux"]) -> bool:
     '''
-    For some 1% corner cases where /testbed/repo_name is the actual project
+    Apply a solution patch from the effective repository root.
+
+    Some images use /testbed/repo_name as the project root.  Callers must check
+    the result: a failed gold-patch application cannot establish that a target
+    failure belongs to the dataset rather than the candidate.
     '''
     if platform == "linux":
         container.send_command("cd /testbed")
         container.send_command("""[ -d .git ] || { g=$(find . -maxdepth 2 -mindepth 2 -type d -name .git -print -quit); [ -n "$g" ] && cd "${g%/.git}"; } ;""")
-        container.apply_patch(solution_patch, verbose=True)
+        applied = container.apply_patch(solution_patch, verbose=True)
         container.send_command("cd /testbed")
     else:
         container.send_command(r"cd C:\testbed")
         container.send_command(r"""if (-not (Test-Path .git)) { $g = Get-ChildItem -Directory -Recurse -Depth 2 -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '.git' } | Select-Object -First 1; if ($g) { Set-Location $g.Parent.FullName } };""")
-        container.apply_patch(solution_patch, verbose=True)
+        applied = container.apply_patch(solution_patch, verbose=True)
         container.send_command(r"cd C:\testbed")
-    return
+    return bool(applied)
 
 def evaluate_instance(  
                     instance_id: str,
@@ -154,8 +162,14 @@ def evaluate_gold_reference_instance(
         image, instance_id, platform, command_timeout=TIMEOUT
     )
     try:
-        container.apply_patch(test_patch, verbose=True)
-        apply_solution_patch_best_effort(gold_patch, container, platform)
+        if not container.apply_patch(test_patch, verbose=True):
+            raise GoldReferenceControlUnavailable(
+                f"benchmark test patch did not apply cleanly for gold control {instance_id}"
+            )
+        if not apply_solution_patch_best_effort(gold_patch, container, platform):
+            raise GoldReferenceControlUnavailable(
+                f"gold patch did not apply cleanly for gold control {instance_id}"
+            )
         if rebuild_cmd.strip():
             container.send_command(rebuild_cmd)
         if not print_cmd.strip():

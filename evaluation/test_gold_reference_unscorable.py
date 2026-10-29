@@ -97,6 +97,7 @@ def test_reference_replay_applies_test_then_gold_patch(monkeypatch, tmp_path):
 
         def apply_patch(self, patch, verbose=False):
             self.applied.append((patch, verbose))
+            return True
 
         def send_command(self, command):
             self.commands.append(command)
