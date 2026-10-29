@@ -20,44 +20,99 @@ class EvaluatorSourceIntegrityError(RuntimeError):
     """The evaluator source checkout is not a reproducible clean revision."""
 
 
-def collect_evaluator_provenance(root: str | os.PathLike[str] | None = None) -> dict[str, object]:
-    """Collect the evaluator checkout identity before loading or scoring data."""
-    checkout = Path(root or Path(__file__).resolve().parents[1]).resolve()
-    top_level = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=checkout,
+def _git_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
     )
+
+
+def _repo_provenance(repo_root: Path) -> dict[str, object]:
+    head = _git_run(["rev-parse", "HEAD"], repo_root)
+    status = _git_run(
+        ["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
+        repo_root,
+    )
+    status_text = status.stdout.strip()
+    return {
+        "root": str(repo_root),
+        "git_available": head.returncode == 0 and status.returncode == 0,
+        "head": head.stdout.strip() if head.returncode == 0 else None,
+        "status": status_text,
+        "clean": head.returncode == 0 and status.returncode == 0 and not status_text,
+        "error": status.stderr.strip() if status.returncode != 0 else None,
+    }
+
+
+def collect_evaluator_provenance(root: str | os.PathLike[str] | None = None) -> dict[str, object]:
+    """Collect the evaluator and launch-submodule identity before scoring."""
+    checkout = Path(root or Path(__file__).resolve().parents[1]).resolve()
+    top_level = _git_run(["rev-parse", "--show-toplevel"], checkout)
     if top_level.returncode != 0:
         return {
             "root": str(checkout),
             "git_available": False,
             "clean": False,
+            "repositories": [],
             "error": top_level.stderr.strip() or "git rev-parse failed",
         }
+
     repo_root = Path(top_level.stdout.strip()).resolve()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
+    main_repo = _repo_provenance(repo_root)
+    repositories = [{"role": "evaluator", **main_repo}]
+    submodule_errors: list[str] = []
+    submodules = _git_run(["submodule", "status", "--recursive"], repo_root)
+    if submodules.returncode != 0:
+        submodule_errors.append(submodules.stderr.strip() or "git submodule status failed")
+    else:
+        for raw_line in submodules.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            marker = raw_line[0] if raw_line[0] in " +-U" else " "
+            entry = raw_line[1:].strip() if raw_line[0] in " +-U" else line
+            match = re.match(r"^([0-9a-f]{40})\s+(.+?)(?:\s+\([^)]*\))?$", entry)
+            if match is None:
+                submodule_errors.append(f"unparseable submodule status: {raw_line}")
+                continue
+            expected_head, relative_path = match.groups()
+            submodule_root = (repo_root / relative_path).resolve()
+            if not submodule_root.is_dir():
+                repositories.append({
+                    "role": "submodule",
+                    "path": relative_path,
+                    "root": str(submodule_root),
+                    "expected_head": expected_head,
+                    "initialized": False,
+                    "clean": False,
+                    "error": "submodule is not initialized",
+                })
+                continue
+            submodule = _repo_provenance(submodule_root)
+            submodule.update({
+                "role": "submodule",
+                "path": relative_path,
+                "expected_head": expected_head,
+                "initialized": marker != "-",
+            })
+            submodule["clean"] = bool(
+                submodule.get("clean")
+                and submodule.get("initialized")
+                and submodule.get("head") == expected_head
+                and marker not in "+U"
+            )
+            repositories.append(submodule)
+
+    clean = bool(main_repo["clean"]) and not submodule_errors and all(
+        repo.get("clean", False) for repo in repositories[1:]
     )
-    status = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    status_text = status.stdout.strip()
-    clean = head.returncode == 0 and status.returncode == 0 and not status_text
     return {
-        "root": str(repo_root),
-        "git_available": True,
-        "head": head.stdout.strip() if head.returncode == 0 else None,
-        "status": status_text,
+        **main_repo,
         "clean": clean,
-        "error": status.stderr.strip() if status.returncode != 0 else None,
+        "repositories": repositories,
+        "submodule_errors": submodule_errors,
     }
 
 
