@@ -65,14 +65,29 @@ def parse_log_pytest(log: str, test_spec: "TestSpec") -> dict[str, str]:
                 if "::" not in remainder:
                     continue
         node_id = remainder
+        first_parameter = node_id.find("[", node_id.find("::") + 2)
+        if first_parameter >= 0:
+            depth = 0
+            for index in range(first_parameter, len(node_id)):
+                character = node_id[index]
+                if character == "[":
+                    depth += 1
+                elif character == "]":
+                    depth -= 1
+                    if depth == 0:
+                        suffix = node_id[index + 1:]
+                        if not suffix or suffix.startswith(" - "):
+                            test_status_map[node_id[:index + 1]] = status
+                            break
+            else:
+                # An unbalanced parameterized node ID is not trustworthy.
+                continue
+            if depth == 0:
+                continue
         if " - " in node_id:
             node_id = node_id.split(" - ", 1)[0].rstrip()
-        if node_id.endswith("]"):
-            test_status_map[node_id] = status
-            continue
-        # Keep the full line for ordinary node IDs and pytest diagnostics; this
-        # fallback preserves compatibility without reintroducing whitespace loss.
-        test_status_map[node_id.split()[0]] = status
+        # Keep the ordinary node ID rather than splitting on whitespace.
+        test_status_map[node_id] = status
     return test_status_map
 
 
