@@ -6,12 +6,73 @@ import json
 import argparse
 import traceback
 import re
+import subprocess
+from pathlib import Path
 from typing import Literal, TypedDict
 from datasets import load_dataset
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 
 TIMEOUT = 150*60
+
+
+class EvaluatorSourceIntegrityError(RuntimeError):
+    """The evaluator source checkout is not a reproducible clean revision."""
+
+
+def collect_evaluator_provenance(root: str | os.PathLike[str] | None = None) -> dict[str, object]:
+    """Collect the evaluator checkout identity before loading or scoring data."""
+    checkout = Path(root or Path(__file__).resolve().parents[1]).resolve()
+    top_level = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
+    if top_level.returncode != 0:
+        return {
+            "root": str(checkout),
+            "git_available": False,
+            "clean": False,
+            "error": top_level.stderr.strip() or "git rev-parse failed",
+        }
+    repo_root = Path(top_level.stdout.strip()).resolve()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    status_text = status.stdout.strip()
+    clean = head.returncode == 0 and status.returncode == 0 and not status_text
+    return {
+        "root": str(repo_root),
+        "git_available": True,
+        "head": head.stdout.strip() if head.returncode == 0 else None,
+        "status": status_text,
+        "clean": clean,
+        "error": status.stderr.strip() if status.returncode != 0 else None,
+    }
+
+
+def require_clean_evaluator_checkout(output_dir: str) -> dict[str, object]:
+    """Fail closed if evaluator code or tests were modified at runtime."""
+    provenance = collect_evaluator_provenance()
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "evaluator_provenance.json"), "w", encoding="utf-8") as f:
+        json.dump(provenance, f, indent=2)
+    if not provenance.get("clean", False):
+        raise EvaluatorSourceIntegrityError(
+            "Evaluator checkout is not clean; refusing to produce a score: "
+            + json.dumps(provenance, sort_keys=True)
+        )
+    return provenance
 
 
 def normalize_month(month: str) -> str:
@@ -266,6 +327,8 @@ def main(
             end_month: str | None = None,
             collect_only: bool = False,
         ):
+    if not collect_only:
+        require_clean_evaluator_checkout(output_dir)
     if patch_dir.strip() != "gold":
         with open(patch_dir, encoding="utf-8") as f:
             preds = json.load(f)
