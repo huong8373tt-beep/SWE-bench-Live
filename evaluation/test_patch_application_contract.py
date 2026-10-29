@@ -32,6 +32,25 @@ class _Container:
 
 
 class PatchApplicationContractTests(unittest.TestCase):
+    def test_crlf_patch_transport_is_normalized(self):
+        patch = "diff --git a/a b/a\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+        normalized, metadata = evaluation.normalize_patch_transport(
+            patch, patch_kind="candidate", instance_id="example__crlf"
+        )
+        self.assertNotIn("\r", normalized)
+        self.assertEqual(metadata["line_ending"], "crlf")
+        self.assertTrue(metadata["normalized"])
+
+    def test_bare_carriage_return_is_rejected(self):
+        with self.assertRaisesRegex(
+            evaluation.EvaluationInfrastructureError, "ambiguous_patch_line_endings"
+        ):
+            evaluation.normalize_patch_transport(
+                "diff --git a/a b/a\r\n+bad\rtext\n",
+                patch_kind="candidate",
+                instance_id="example__ambiguous",
+            )
+
     def setUp(self):
         self.original_runtime = evaluation.SetupRuntime
 

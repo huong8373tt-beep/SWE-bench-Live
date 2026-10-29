@@ -23,11 +23,37 @@ class EvaluationInfrastructureError(RuntimeError):
         detail: str,
         *,
         failure_phase: str | None = None,
+        patch_transport: dict[str, object] | None = None,
     ):
         self.failure_class = failure_class
         self.detail = detail
         self.failure_phase = failure_phase or failure_class
+        self.patch_transport = patch_transport
         super().__init__(f"{failure_class}: {detail}")
+
+
+def normalize_patch_transport(
+    patch: str,
+    *,
+    patch_kind: str,
+    instance_id: str,
+) -> tuple[str, dict[str, object]]:
+    """Canonicalize Windows CRLF patch transport without changing patch content."""
+    carriage_returns = patch.count("\r")
+    if carriage_returns == 0:
+        return patch, {"line_ending": "lf_or_none", "normalized": False}
+    crlf_count = patch.count("\r\n")
+    if crlf_count != carriage_returns:
+        raise EvaluationInfrastructureError(
+            "ambiguous_patch_line_endings",
+            f"{patch_kind} patch for {instance_id} contains bare or mixed carriage returns; refusing to rewrite it",
+            failure_phase=f"{patch_kind}_patch_transport_validation",
+        )
+    return patch.replace("\r\n", "\n"), {
+        "line_ending": "crlf",
+        "normalized": True,
+        "carriage_return_count": carriage_returns,
+    }
 
 
 def normalize_month(month: str) -> str:
@@ -99,7 +125,17 @@ def _require_patch_application(
     verbose: bool = False,
 ) -> None:
     """Apply a required patch or classify the task as not evaluated."""
-    if container.apply_patch(patch, verbose=verbose):
+    try:
+        normalized_patch, patch_transport = normalize_patch_transport(
+            patch, patch_kind=patch_kind, instance_id=instance_id
+        )
+    except EvaluationInfrastructureError:
+        try:
+            container.cleanup()
+        except Exception:
+            pass
+        raise
+    if container.apply_patch(normalized_patch, verbose=verbose):
         return
     try:
         container.cleanup()
@@ -110,6 +146,7 @@ def _require_patch_application(
         "required_patch_application_failed",
         f"{patch_kind} patch failed to apply for {instance_id}; refusing to run build, test, or result commands.",
         failure_phase=failure_phase,
+        patch_transport=patch_transport,
     )
 
 
@@ -268,6 +305,8 @@ def run_instance(
             "patch_application_order": ["test_patch", "candidate_patch"],
             "error": exc.detail,
         }
+        if exc.patch_transport is not None:
+            report["patch_transport"] = exc.patch_transport
         with open(report_dir, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=True)
         print("Infrastructure error...", instance["instance_id"], exc.failure_class, flush=True)
