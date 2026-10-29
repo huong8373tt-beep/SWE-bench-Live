@@ -113,6 +113,35 @@ def _require_patch_application(
     )
 
 
+def _require_image_base_commit(
+    container: SetupRuntime,
+    base_commit: str | None,
+    *,
+    instance_id: str,
+) -> None:
+    """Require the launch image checkout to match the dataset patch base."""
+    expected = str(base_commit or "").strip()
+    if not expected:
+        return
+    result = container.send_command("git rev-parse HEAD")
+    exit_code = int(getattr(getattr(result, "metadata", None), "exit_code", 1))
+    output = str(getattr(result, "output", "") or "").strip()
+    observed = output.splitlines()[-1].strip() if output else ""
+    if exit_code == 0 and observed == expected:
+        return
+    try:
+        container.cleanup()
+    except Exception:
+        pass
+    observed_display = observed or "<unavailable>"
+    raise EvaluationInfrastructureError(
+        "image_base_commit_mismatch",
+        f"official image HEAD {observed_display!r} does not match dataset base_commit "
+        f"{expected!r} for {instance_id}; refusing to apply patches or run commands.",
+        failure_phase="image_base_commit_validation",
+    )
+
+
 def get_default_image_name(instance_id: str, platform: Literal["windows", "linux"]) -> str:
     if platform == "linux":
         med = "x86_64"
@@ -151,8 +180,10 @@ def evaluate_instance(
                     parser: str,
                     platform: Literal["windows", "linux"],
                     output_dir: str,
+                    base_commit: str | None = None,
                     ) -> dict[str, Literal['pass', 'fail', 'skip']]:
     container: SetupRuntime = SetupRuntime.from_launch_image(image, instance_id, platform, command_timeout=TIMEOUT)
+    _require_image_base_commit(container, base_commit, instance_id=instance_id)
     _require_patch_application(
         container,
         test_patch,
@@ -224,7 +255,8 @@ def run_instance(
                 instance["pred_patch"],
                 instance.get("log_parser", instance.get("parser", "")),
                 platform,
-                instance_output_dir
+                instance_output_dir,
+                base_commit=instance.get("base_commit"),
         )
     except EvaluationInfrastructureError as exc:
         report = {

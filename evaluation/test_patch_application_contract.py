@@ -76,6 +76,37 @@ class PatchApplicationContractTests(unittest.TestCase):
             [True, False], "solution patch failed to apply", "candidate_patch_after_test_patch"
         )
 
+    def test_image_base_mismatch_stops_before_patch_application(self):
+        container = _Container([True, True])
+
+        class _Runtime:
+            @classmethod
+            def from_launch_image(cls, *_args, **_kwargs):
+                return container
+
+        evaluation.SetupRuntime = _Runtime
+        with tempfile.TemporaryDirectory() as output_dir:
+            with self.assertRaisesRegex(
+                evaluation.EvaluationInfrastructureError, "image_base_commit_mismatch"
+            ) as ctx:
+                evaluation.evaluate_instance(
+                    instance_id="example__base-mismatch",
+                    image="example-image",
+                    rebuild_cmd="rebuild",
+                    test_cmd="run-tests",
+                    print_cmd="print-results",
+                    parser="pytest",
+                    test_patch="test-patch",
+                    solution_patch="solution-patch",
+                    platform="windows",
+                    output_dir=output_dir,
+                    base_commit="expected-base",
+                )
+        self.assertEqual(ctx.exception.failure_class, "image_base_commit_mismatch")
+        self.assertEqual(ctx.exception.failure_phase, "image_base_commit_validation")
+        self.assertEqual(container.patch_results, [True, True])
+        self.assertTrue(container.cleaned)
+
     def test_run_instance_records_patch_failure_as_not_evaluated(self):
         instance = {
             "instance_id": "example__required-patch",
