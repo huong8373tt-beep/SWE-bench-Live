@@ -17,7 +17,8 @@ class EvaluatorSourceIntegrityTests(unittest.TestCase):
             type("Result", (), {"returncode": 0, "stdout": "c4b623d930f3728e5338664bb634021b98492cbf\n", "stderr": ""})(),
             type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
         ]
-        with patch.object(evaluation.subprocess, "run", side_effect=responses):
+        with patch.object(evaluation.subprocess, "run", side_effect=responses), \
+             patch.object(evaluation.Path, "is_dir", return_value=True):
             provenance = evaluation.collect_evaluator_provenance("C:/repo")
         self.assertTrue(provenance["git_available"])
         self.assertTrue(provenance["clean"], provenance)
