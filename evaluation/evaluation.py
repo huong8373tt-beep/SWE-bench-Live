@@ -23,12 +23,22 @@ def _patch_sha256(patch: str) -> str:
     return hashlib.sha256(patch.encode("utf-8")).hexdigest()
 
 
+def _canonical_patch_transport(patch: str) -> str:
+    """Canonicalize CRLF transport for identity checks, but not bare CR."""
+    if "\r" in patch and patch.count("\r") != patch.count("\r\n"):
+        return patch
+    return patch.replace("\r\n", "\n")
+
+
 def _reference_patch_identity(instance: dict) -> dict[str, object]:
     """Return auditable reference identity without changing the candidate text."""
     gold = str(instance.get("patch", ""))
+    canonical_gold = _canonical_patch_transport(gold)
     return {
         "gold_patch_sha256": _patch_sha256(gold),
         "gold_patch_bytes": len(gold.encode("utf-8")),
+        "canonical_gold_patch_sha256": _patch_sha256(canonical_gold),
+        "canonical_gold_patch_bytes": len(canonical_gold.encode("utf-8")),
     }
 
 
@@ -40,20 +50,27 @@ def validate_candidate_provenance(instance: dict) -> dict[str, object]:
     must not be presented as an independently generated model answer.
     """
     candidate = str(instance.get("pred_patch", ""))
+    canonical_candidate = _canonical_patch_transport(candidate)
     reference = _reference_patch_identity(instance)
     candidate_sha = _patch_sha256(candidate)
     candidate_bytes = len(candidate.encode("utf-8"))
+    canonical_candidate_sha = _patch_sha256(canonical_candidate)
+    canonical_candidate_bytes = len(canonical_candidate.encode("utf-8"))
     result = {
         "candidate_patch_sha256": candidate_sha,
         "candidate_patch_bytes": candidate_bytes,
+        "canonical_candidate_patch_sha256": canonical_candidate_sha,
+        "canonical_candidate_patch_bytes": canonical_candidate_bytes,
         **reference,
         "candidate_equals_gold": candidate_sha == reference["gold_patch_sha256"]
         and candidate_bytes == reference["gold_patch_bytes"],
+        "candidate_equals_gold_after_crlf_normalization": canonical_candidate_sha == reference["canonical_gold_patch_sha256"]
+        and canonical_candidate_bytes == reference["canonical_gold_patch_bytes"],
     }
-    if result["candidate_equals_gold"]:
+    if result["candidate_equals_gold_after_crlf_normalization"]:
         raise CandidateProvenanceError(
-            "candidate patch is byte-identical to the benchmark gold patch; "
-            "independent model provenance is unavailable"
+            "candidate patch is byte-identical to the benchmark gold patch after "
+            "CRLF-to-LF transport normalization; independent model provenance is unavailable"
         )
     return result
 
